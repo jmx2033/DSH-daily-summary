@@ -1,6 +1,6 @@
 # 每日总结（Daily Summary）· DSH 插件
 
-当前版本 **1.2.4**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
+当前版本 **1.6.1**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
 `index.js` 用 `createRequire` 读回来，不另写一份。
 
 以 [`docs/SKILL.md`](docs/SKILL.md)（终版，QA 10/10 通过）为唯一基准，
@@ -13,7 +13,7 @@
 | Host 工具 | `index.js` | `daily_summary`（取数/定界/降级声明）+ `daily_summary_selfcheck`（成稿自检）+ `daily_summary_settings`（触发设置）+ 定时自动化 |
 | Client 界面 | `client.js` | 侧边栏底部（账户入口上方）的「每日总结」横栏 + 设置里的一页 |
 | 状态持久化 | `~/.dsh/daily-summary/state.json` | 凌晨「切当天」例外 + 一天只交一份的分支判断依据，自检通过时自动写入 |
-| 设置持久化 | `~/.dsh/daily-summary/settings.json` | 触发时间（`scheduleTime`）与固定会话（`targetSessionId`），设置页/工具/定时共用 |
+| 设置持久化 | `~/.dsh/daily-summary/settings.json` | 触发时间（`scheduleTime`）、固定会话（`targetSessionId`）、日志落盘（`logFile`/`logOverwrite`）与取数可调项（`tuning`），设置页/工具/定时共用 |
 
 ### 版本历史
 
@@ -31,6 +31,10 @@
 | 1.3.2 | 引导语与定时提醒词补上「插件会自动写入，别自己动手」：模型不知道这件事时会用 `edit` 再写一遍造成重复。命令投递的引导语还会带出具体目标文件路径 |
 | 1.4.0 | 修素材不完整：每类事件原来只取**最后** N 条（默认 8），当天 133 条用户消息只进来 8 条、上午中午全丢；改为**全天均匀抽样**并把默认上限提到 16，同时用 `coverage.raw*` 如实报出抽样前的真实条数 |
 | 1.4.1 | 采样上限默认值 16 → 24（五类素材都走全天均匀抽样，只调密度） |
+| 1.5.0 | 取数与分界做成可调项：`snippetChars` / `maxEventsPerKind` / `maxSessions` / `cutoverHour` / `autoDelayGraceHours` 都能在设置页、`/daily-summary-settings` 命令和 `daily_summary_settings` 工具里改，持久化到 `settings.json` 的 `tuning` 分区（三级回退：settings > config > 代码默认） |
+| 1.5.1 | 侧边栏横栏改为内容自适应宽度，不再撑满整条侧栏 |
+| 1.6.0 | 取数改为**全局字符预算**（`charBudget`，默认 40 万字符）：按各会话原始字符量加权分配，每会话保底 40%、单会话封顶 25%；会话内按类别分层截断（用户 800 字、工具错误 400 字、助手 400 字、推理 300 字、工具调用 160 字），工具调用优先保留写/改类操作。`charBudget` 设为 0 退回「每类固定条数」的旧规则 |
+| 1.6.1 | 修 `daily_summary_settings` 返回体含 `undefined` 导致 DSH 报「not lossless JSON」：返回前统一清洗（命令路径此前被 `JSON.stringify` 掩盖，所以只有工具调用会失败） |
 
 ## 自动化：定时任务一天只交一份（分支结构）
 
@@ -109,6 +113,8 @@
 |---|---|---|
 | 每天自动产出时间 | 设置文件的 `scheduleTime` | 同步改掉**所有会话**那条提醒的时间 |
 | 在哪条会话里触发 | 设置文件的 `targetSessionId` | 下拉框列出**所有工作区的全部会话**（按工作区分组、显示标题）；只保留目标会话那条，其余删除；`自动` 则回到"最近活跃会话" |
+| 产出后自动写入日志文件 | 设置文件的 `logFile` | 留空则在目标会话目录里自动探测；同一天默认不覆盖 |
+| 取数与分界（6 项） | 设置文件的 `tuning` | 字符预算、每类条数、截断长度、会话上限、日界钟点、迟到宽限，见下文「取数可调项」 |
 
 > 候选清单的坑一：`filterSessions` 的 `created-at` 过滤器要求 `to` 是**数字时间戳**，
 > 传 `new Date()` 会抛错并被 catch 吞成空列表——2026-10-23 实测设置页下拉框因此
@@ -128,8 +134,8 @@
 写回宿主走的是和横栏同一条通道：`ctx.remote.commands.execute(sessionId, '/daily-summary-settings …')`。
 一条操作三个调用方共用 Host 侧 `reconcileReminders`：
 
-1. **设置页**（`time HH:MM` / `target <id|auto>`）
-2. **agent 工具** `daily_summary_settings`（`action: get | set_time | set_target`）
+1. **设置页**（`time HH:MM` / `target <id|auto>` / `log <文件|auto>` / `tuning <键> <值>`）
+2. **agent 工具** `daily_summary_settings`（`action: get | set_time | set_target | set_log | set_tuning | reset_tuning`）
 3. **`ensureSchedule`**（每次 `daily_summary` 调用时读设置文件决定时间与归属）
 
 > Client 侧没有独立的 RPC：设置页也要求先选中一个会话（要拿 `agent` 才能执行命令）。
@@ -178,7 +184,7 @@
 |---|---|---|
 | `daily_summary` | 第一步 + 第二步来源二 + 第四步 | 取一次运行时本地时间，按 **04:00 日界**切出三条互斥分支，算统计日 / 统计区间 / 抬头注记（含凌晨「切当天」例外所需的持久状态）；只读扫描统计区间内各会话日志，给出候选素材清单与覆盖面计数；按阈值生成逐字降级声明。 |
 | `daily_summary_selfcheck` | 第三步成文规则 + 输出自检 + 禁止事项 | 对已成文的四段纯文本做确定性检查：抬头逐字、四段标题各 1 次、注记带截至时刻、无「用户」/`@scene`/表格/围栏/加粗/HTML、默认不写来源。返回 `problems` 清单，`ok` 为真才可交付；同时在通过时写入日志文件。 |
-| `daily_summary_settings` | 自动化配置 | `action: get / set_time / set_target / set_log`，读改触发时间、固定会话、日志落盘位置，与设置页共用同一份设置。 |
+| `daily_summary_settings` | 自动化配置 | `action: get / set_time / set_target / set_log / set_tuning / reset_tuning`，读改触发时间、固定会话、日志落盘位置与取数可调项，与设置页共用同一份设置。 |
 
 分工严格按需求 §7 的**铁律**：时间与区间只能算不能猜（插件算），正文只能写不能拼（模型写）。
 
@@ -203,20 +209,26 @@
 4. 生效后：侧边栏底部出现「每日总结」横栏，设置 → 左侧导航多出一页「每日总结」。
 
 > 包名带 `@local/` 前缀是本地包名，不发布到 npm；安装走目录，不需要联网。
-> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.2.4` 这样的版本号。
+> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.6.1` 这样的版本号。
 
-可选配置（写在 `cordis.patch.yml` 的 `config` 里，一般不需要动）：
+可选配置有两条路：**优先用设置页**（设置 → 每日总结 → 取数与分界），改动写进
+`settings.json` 的 `tuning` 分区并立即生效；`cordis.patch.yml` 的 `config` 是兜底，
+settings 里没写的项才取它。
 
 ```yaml
 - insert:
     - id: daily-summary
       name: '@local/dsh-daily-summary'
       config:
-        cutoverHour: 4        # 日界常数，SKILL.md 第一步第 10 条：改值只改这一处
-        maxEventsPerKind: 24  # 每个会话每类事件最多返回条数（全天均匀抽样）
-        snippetChars: 160     # 单条素材截断长度
-        maxSessions: 80       # 最多扫描的会话数
+        cutoverHour: 4          # 日界小时：凌晨几点算新一天（0–23）
+        charBudget: 400000      # 全局字符预算，按会话体量分配（0 = 关闭，退回按条数）
+        maxEventsPerKind: 24    # 关闭预算时每类条数上限；预算模式下作为兜底
+        snippetChars: 160       # 关闭预算时的单条截断长度
+        maxSessions: 80         # 最多扫描的会话数
+        autoDelayGraceHours: 6  # 自动投递迟到宽限（小时）
 ```
+
+这 6 项都能在设置页直接改，不需要碰这个文件。
 
 状态与设置默认写在 `~/.dsh/daily-summary/`（`state.json` + `settings.json`），
 不用手工指定路径。
@@ -262,20 +274,47 @@ Error: tool "daily_summary" returned invalid output: value is not lossless JSON
 因此 `collectSources` 的所有字段一律归一成 string/number/boolean/null/数组/纯对象，
 `smoke-test.mjs` 里有一条 `assertLossless` 递归断言守着它，**新增字段必须一起过这条断言**。
 
+## 取数可调项（1.5.0 / 1.6.0）
+
+「取数与分界」共 6 项，三种改法等价，最终都写进 `settings.json` 的 `tuning` 分区：
+
+| 键 | 默认 | 范围 | 作用 |
+|---|---|---|---|
+| `charBudget` | 400000 | 50000–2000000 | 全局字符预算；0 = 关闭预算，退回按条数 |
+| `maxEventsPerKind` | 24 | 1–200 | 关闭预算时的每类条数上限（预算模式下作兜底） |
+| `snippetChars` | 160 | 20–2000 | 关闭预算时的单条截断长度 |
+| `maxSessions` | 80 | 1–5000 | 最多扫描的会话数 |
+| `cutoverHour` | 4 | 0–23 | 日界：凌晨几点算新一天 |
+| `autoDelayGraceHours` | 6 | 0.5–48 | 自动投递的迟到宽限 |
+
+三种改法：
+
+1. **设置页**：设置 → 每日总结 → 取数与分界（数字输入框，保存即生效）
+2. **命令**：`/daily-summary-settings tuning <键> <值>`；`tuning <键> default` 恢复默认
+3. **工具**：`daily_summary_settings` 的 `action: set_tuning`（传 `tuning: {键: 值}`）
+   或 `reset_tuning`（传 `key: [键]`）
+
+`charBudget > 0` 时走预算模式：先按各会话的原始字符量加权分配（每会话保底 40%、
+单会话封顶 25%），会话内按类别切分额度（用户 40% / 助手 25% / 工具调用 15% /
+工具错误 12% / 推理 8%），再按类别分级截断（用户 800 字、错误 400、助手 400、
+推理 300、工具调用 160）。工具调用优先保留写/改类操作。
+
 ## 测试
 
 不依赖任何宿主环境，纯 Node 跑：
 
 ```bash
-npm test                 # 一次跑完下面六个
+npm test                 # 一次跑完下面九个
 node --check index.js && node --check client.js
 node boundary-test.mjs   # 三分支、抬头形态、唯一失败退出、自检正反例
-node smoke-test.mjs      # 素材扫描、区间外事件排除、降级声明三文案、返回值无 undefined、空壳不计入覆盖面
+node smoke-test.mjs      # 素材扫描、区间外事件排除、降级声明三文案、返回值无损 JSON、空壳不计入覆盖面
 node command-test.mjs    # /daily-summary handler：消息自建合规、投递目标与唤醒路径
 node branch-test.mjs     # 日界、00:00 边界、关机延迟补发、手动 vs 定时的跳过语义、自检记录日
 node schedule-migrate-test.mjs  # 提醒时间/提醒词漂移时的迁移，迁移失败不拖垮建提醒
-node settings-test.mjs   # 设置页写入路径：时间归一化、24:00↔00:00、统一改所有会话、指定会话、工具与页面同源
+node settings-test.mjs   # 设置页写入路径：时间归一化、24:00↔00:00、统一改所有会话、指定会话、可调项、工具与页面同源
 node log-test.mjs        # 日志落盘：日期归一化、块格式、追加/不覆盖/覆盖、端到端落盘
+node budget-test.mjs     # 预算分配：总和 ≤ 预算、保底、上限、分级截断常量
+node sampling-test.mjs   # 分层取样：额度换算条数、写操作优先、预算与旧模式、无损 JSON 清洗
 ```
 
 ## 已知限制
@@ -289,6 +328,7 @@ node log-test.mjs        # 日志落盘：日期归一化、块格式、追加/�
 7. 定时提醒绑定在「第一次调用 `daily_summary` 的会话」上——通常是装好插件后你第一次要总结的那个会话。想让固定会话承担定时任务，就在那个会话里说一次「每日总结」，或在设置页「每日总结」里直接指定会话。
 8. **设置页需要先选中一个会话**：`ctx.remote.commands.execute` 要传 `agent`，没有选中会话时设置页会明确提示而不是静默失败。
 9. 设置页的会话下拉框**不显示无标题会话**（空壳/探针）。当前固定的那条若恰好无标题，仍会单独列出来，不会被静默改回「自动」。
+10. `charBudget` 分到的额度若不足以覆盖某类素材，该类仍至少保留 1 条并截断到分级上限；极端大会话可能因此只剩几十条摘要，这是预算设计的取舍。
 
 ## 许可证
 
