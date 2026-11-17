@@ -132,6 +132,27 @@ const seedRecords = () => [
 ]
 
 const sessionQuery = {
+  // 最小可用的会话日志：没有它，所有会话都提不出素材，归档开关的断言会变成空数组上恒真。
+  async readSession(id) {
+    // 用 new Date() 而不是被本测试 mock 过的 Date.now()：
+    // 插件取窗口走 `new Date()`（config.clock 默认），事件必须落在同一个真实"今天"里。
+    const now = new Date().getTime()
+    return {
+      session: { id, createdAt: now - 3_600_000, cwd: 'D:/w' },
+      events: [
+        {
+          time: now - 1_800_000,
+          type: 'user/message',
+          data: { content: [{ type: 'text', text: `素材用户消息 ${id}` }] },
+        },
+        {
+          time: now - 1_700_000,
+          type: 'assistant/message',
+          data: { message: { content: [{ type: 'text', text: `素材助手回复 ${id}` }] } },
+        },
+      ],
+    }
+  },
   async filterSessions(filters) {
     // 严格模拟真实 sessionQuery：created-at 的 to 必须是数字时间戳，
     // 传 Date 对象就抛错。（2026-10-23 真实 bug：传 new Date() 被 catch 吞成
@@ -507,6 +528,77 @@ const parse = (result) => {
   assert.equal(read.tuning.values.snippetChars, 80, 'config 覆盖默认')
   assert.equal(read.tuning.values.cutoverHour, 3)
   assert.equal(read.tuning.values.maxSessions, 80, '未配置的键回代码默认')
+}
+
+// 17) 归档开关的读写：默认包含、工具与命令都能改、持久化
+{
+  const dir = await tmpDir()
+  const schedule = makeSchedule(seedRecords())
+  const ctx = makeCtx(schedule, sessionQuery)
+  apply(ctx, { stateFile: path.join(dir, 'state.json'), sessionQuery })
+  const tool = ctx.registeredTools.get('daily_summary_settings')
+
+  const got = await tool.execute({ action: 'get' }, { agent: { id: 'session-a' } })
+  assert.equal(got.includeArchived, true, '默认包含归档会话')
+
+  const off = await tool.execute(
+    { action: 'set_archived', includeArchived: false },
+    { agent: { id: 'session-a' } },
+  )
+  assert.equal(off.ok, true)
+  assert.equal(off.includeArchived, false, '工具改完应回显新值')
+  const stored = JSON.parse(await readFile(path.join(dir, 'settings.json'), 'utf8'))
+  assert.equal(stored.includeArchived, false, '应持久化到 settings.json')
+
+  const command = ctx.commands.get('daily-summary-settings')
+  const on = parse(await command.handler({ agent: { id: 'session-a' }, rawInput: 'archived on' }))
+  assert.equal(on.includeArchived, true)
+  const stored2 = JSON.parse(await readFile(path.join(dir, 'settings.json'), 'utf8'))
+  assert.equal(stored2.includeArchived, true, '命令也应写进设置文件')
+}
+
+// 18) 关闭后取数确实跳过归档会话
+{
+  const dir = await tmpDir()
+  const schedule = makeSchedule(seedRecords())
+  const ctx = makeCtx(schedule, sessionQuery)
+  const stateFile = path.join(dir, 'state.json')
+  const archiveStateFile = path.join(dir, 'workspace.json')
+  await writeFile(
+    archiveStateFile,
+    JSON.stringify({ global: { archivedSessionIds: ['session-a'] } }),
+    'utf8',
+  )
+  apply(ctx, { stateFile, sessionQuery, includeArchived: false, archiveStateFile })
+  const summaryTool = ctx.registeredTools.get('daily_summary')
+  const off = await summaryTool.execute({}, { agent: { id: 'session-b', followup: () => {} } })
+  assert.equal(off.ok, true)
+  const offIds = off.sources.sessions.map((entry) => entry.sessionId)
+  assert.ok(!offIds.includes('session-a'), '关闭后应跳过归档会话')
+  assert.equal(off.sources.archivedSkipped, 1, '被过滤的归档数应如实上报')
+}
+
+// 19) 默认（开启）时包含归档会话
+{
+  const dir = await tmpDir()
+  const schedule = makeSchedule(seedRecords())
+  const ctx = makeCtx(schedule, sessionQuery)
+  const stateFile = path.join(dir, 'state.json')
+  const archiveStateFile = path.join(dir, 'workspace.json')
+  await writeFile(
+    archiveStateFile,
+    JSON.stringify({ global: { archivedSessionIds: ['session-a'] } }),
+    'utf8',
+  )
+  apply(ctx, { stateFile, sessionQuery, archiveStateFile })
+  const summaryTool = ctx.registeredTools.get('daily_summary')
+  const on = await summaryTool.execute({}, { agent: { id: 'session-b', followup: () => {} } })
+  assert.equal(on.ok, true)
+  assert.ok(
+    on.sources.sessions.map((entry) => entry.sessionId).includes('session-a'),
+    '默认应包含归档会话',
+  )
+  assert.equal(on.sources.archivedSkipped, 0)
 }
 
 console.log('settings-test: all assertions passed')

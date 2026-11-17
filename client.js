@@ -183,6 +183,7 @@ window.__ModuleLoader__.load({
       const [time, setTime] = React.useState('00:00')
       const [target, setTarget] = React.useState('')
       const [logFile, setLogFile] = React.useState('')
+      const [includeArchived, setIncludeArchived] = React.useState(true)
       const [tuning, setTuning] = React.useState({})
       const [status, setStatus] = React.useState('')
       const [busy, setBusy] = React.useState(false)
@@ -192,6 +193,8 @@ window.__ModuleLoader__.load({
         setTime(typeof next.timeRaw === 'string' ? next.timeRaw.slice(0, 5) : '00:00')
         setTarget(next.targetSessionId || '')
         setLogFile(next.logFile || '')
+        // 归档开关默认开启：Host 只在显式写过布尔值时才返回该字段。
+        setIncludeArchived(next.includeArchived !== false)
         // 可调项：以 Host 侧当前生效值为种子，另存默认值与「是否被覆盖」，
         // 供保存时判断该发 `tuning <key> <value>` 还是 `<key> default`。
         const t = next.tuning || {}
@@ -235,7 +238,7 @@ window.__ModuleLoader__.load({
         if (!settingsActions || busy) return
         setBusy(true)
         setStatus(T('保存中…', 'Saving…'))
-        settingsActions.save({ time, target, log: logFile, tuning }).then(
+        settingsActions.save({ time, target, log: logFile, tuning, includeArchived }).then(
           (next) => {
             adopt(next)
             setStatus(T('已保存，立即生效', 'Saved — active now'))
@@ -483,6 +486,35 @@ window.__ModuleLoader__.load({
                 ),
           ),
         ]),
+        h('div', { key: 'archived', style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
+          h(
+            'label',
+            {
+              key: 'label',
+              style: { ...FIELD.label, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' },
+            },
+            [
+              h('input', {
+                key: 'input',
+                type: 'checkbox',
+                checked: includeArchived,
+                onChange: (event) => {
+                  setIncludeArchived(event.target.checked)
+                  setStatus('')
+                },
+              }),
+              T('包含已归档会话', 'Include archived sessions'),
+            ],
+          ),
+          h(
+            'div',
+            { key: 'hint', style: FIELD.hint },
+            T(
+              '归档只是界面隐藏，日志不会删；关掉后取数与候选都会跳过它们。',
+              'Archiving only hides them in the UI — logs stay. Turn off to skip them in sampling and candidates.',
+            ),
+          ),
+        ]),
         h('div', { key: 'tuning', style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
           h('div', { key: 'heading', style: { ...FIELD.label, marginBottom: 6 } },
             T('取数与分界', 'Sampling & day cutoff')),
@@ -620,12 +652,19 @@ window.__ModuleLoader__.load({
 
         settingsActions = {
           load: () => runSettingsCommand(`/${SETTINGS_COMMAND}`),
-          save: ({ time, target, log, tuning }) => {
+          save: ({ time, target, log, tuning, includeArchived }) => {
             // 先落时间/目标/日志（现有逻辑），再逐个发可调项命令。
             // tuning 参数形如 { 键: { value, defaultValue, overridden } }，由设置页组件备好。
             let chain = runSettingsCommand(`/${SETTINGS_COMMAND} time ${time}`)
               .then(() => runSettingsCommand(`/${SETTINGS_COMMAND} target ${target || 'auto'}`))
               .then(() => runSettingsCommand(`/${SETTINGS_COMMAND} log ${log || 'auto'}`))
+            if (includeArchived !== undefined) {
+              chain = chain.then(() =>
+                runSettingsCommand(
+                  `/${SETTINGS_COMMAND} archived ${includeArchived ? 'on' : 'off'}`,
+                ),
+              )
+            }
             if (tuning) {
               for (const [key, spec] of Object.entries(tuning)) {
                 // 判据：用户想把该键设成与默认一致 → 走 `default`（从 settings 里移除 override）；

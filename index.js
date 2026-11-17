@@ -110,6 +110,34 @@ const DEFAULT_STATE_FILE = path.join(homedir(), '.dsh', 'daily-summary', 'state.
 const DEFAULT_SESSIONS_ROOT = path.join(homedir(), '.dsh', 'sessions')
 
 /**
+ * 归档状态存在 workspace 存储里（`global.archivedSessionIds`）。
+ *
+ * 2026-11-17 实测：归档只影响界面可见性，32 个归档会话的日志目录一个都没删。
+ * 所以取数默认把它们一起纳入——归档掉的对话，当天做的事不该在总结里消失。
+ */
+const DEFAULT_STORAGE_FILE = path.join(homedir(), '.dsh', 'storages', 'workspace.json')
+
+/** 默认包含已归档会话（保持历史行为）。 */
+const DEFAULT_INCLUDE_ARCHIVED = true
+
+/**
+ * 读归档会话 ID 集合。
+ *
+ * 读不出（文件缺失、格式变化、权限）就返回空集合 —— 退化为「全部纳入」，
+ * 宁可多读也不要因为读不到归档状态而漏掉一整天的素材。
+ */
+async function readArchivedSessionIds(file = DEFAULT_STORAGE_FILE) {
+  try {
+    const raw = await readFile(file, 'utf8')
+    const parsed = JSON.parse(raw)
+    const ids = parsed?.global?.archivedSessionIds
+    return new Set(Array.isArray(ids) ? ids : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/**
  * 定时自动化默认值：每天 24:00（即次日 00:00）本地时间。
  *
  * 写成 `00:00:00` 而不是 `24:00:00`：schedule 服务只接受
@@ -747,6 +775,18 @@ async function collectSources(query, window, options, selfSessionId) {
     }
   }
 
+  // 归档策略：默认包含归档会话；关掉时按 workspace 存储里的 archivedSessionIds 过滤。
+  // 过滤只影响"读哪些会话"，不删除任何日志；被过滤掉的数量见下方的 archivedSkipped。
+  let archivedSkipped = 0
+  if (options.includeArchived === false) {
+    const archived = await readArchivedSessionIds(options.archiveStateFile)
+    if (archived.size > 0) {
+      const before = records.length
+      records = records.filter((record) => !archived.has(record?.header?.id))
+      archivedSkipped = before - records.length
+    }
+  }
+
   // 跨工作区诊断：语料里到底有几个工作区、各自多少会话。
   // 需求要的是「不同工作区的多个对话汇总」，这一步用来证明覆盖面没有被我自己的过滤削掉。
   const cwdHistogram = {}
@@ -941,6 +981,7 @@ async function collectSources(query, window, options, selfSessionId) {
     shellSessions,
     scanned,
     skippedForLimit: skipped,
+    archivedSkipped,
     unreadable,
     // 读不出的会话明细：模型据此在总结里如实声明「某段素材缺失」，不假装完整。
     unreadableDetails,
@@ -1284,11 +1325,14 @@ async function readSettings(settingsFile) {
   const tuning =
     typeof tuningRaw === 'object' && tuningRaw !== null && !Array.isArray(tuningRaw) ? tuningRaw : {}
   const ms = typeof tuningRaw?.[TUNING_MS_KEY] === 'number' ? tuningRaw[TUNING_MS_KEY] : undefined
+  // 归档开关：只有显式写过布尔值才返回，否则交给三级回退（config / 默认 true）。
+  const includeArchived = typeof raw.includeArchived === 'boolean' ? raw.includeArchived : undefined
   return {
     scheduleTime: time,
     targetSessionId: target,
     logFile,
     logOverwrite,
+    includeArchived,
     tuning: { ...tuning, ...(ms !== undefined ? { autoDelayGraceMs: ms } : {}) },
   }
 }
@@ -1299,6 +1343,20 @@ async function applyLogSetting(settingsFile, logFile, overwrite) {
   const next = { ...current, logFile: logFile && logFile.trim() ? logFile.trim() : null }
   if (typeof overwrite === 'boolean') next.logOverwrite = overwrite
   return writeState(settingsFile, next)
+}
+
+/**
+ * 只改「是否包含已归档会话」这一项，其余设置原样保留。
+ *
+ * 默认（`true`）保持历史行为：归档只是界面隐藏，日志没删，当天做的事仍应进总结。
+ * 关掉（`false`）时取数与设置页候选都会跳过 `archivedSessionIds` 里的会话。
+ */
+async function applyArchivedSetting(settingsFile, includeArchived) {
+  const current = await readState(settingsFile)
+  return writeState(settingsFile, {
+    ...current,
+    includeArchived: includeArchived === true,
+  })
 }
 
 /**
@@ -1328,14 +1386,20 @@ async function applyTuningSetting(settingsFile, adjustment) {
  * 可选会话清单（给设置页的下拉框）。只读：列表 + 标题，不读日志正文。
  * 读不出就返回空数组，由调用方如实降级。
  */
-async function listSessionCandidates(query, limit = 100) {
+async function listSessionCandidates(query, limit = 100, options = {}) {
   if (!query || typeof query.filterSessions !== 'function') return []
   try {
     // `to` 必须是**数字时间戳**：filterSessions 的 created-at 过滤按 number 校验，
     // 传 Date 对象会让它抛错、被下面的 catch 吞成空列表
     // （2026-10-23 实测：设置页下拉框因此只剩「自动」一项）。
     const records = await query.filterSessions([{ kind: 'created-at', to: Date.now() }])
-    const picked = (Array.isArray(records) ? records : []).slice(-limit).reverse()
+    let pool = Array.isArray(records) ? records : []
+    // 归档会话默认也列出来（它们照样能取到素材）；关掉开关时按归档标记过滤。
+    if (options.includeArchived === false) {
+      const archived = await readArchivedSessionIds(options.archiveStateFile)
+      if (archived.size > 0) pool = pool.filter((record) => !archived.has(record?.header?.id))
+    }
+    const picked = pool.slice(-limit).reverse()
     const ids = picked.map((record) => record.header?.id).filter((id) => typeof id === 'string')
     const byId = new Map()
     if (ids.length > 0 && typeof query.readTitleSnapshots === 'function') {
@@ -1670,7 +1734,13 @@ export function apply(ctx, config = {}) {
     } catch {
       reminders = []
     }
-    const candidates = await listSessionCandidates(resolveQuery())
+    // 归档开关：settings 优先、config 次之、默认包含（归档只是界面隐藏，日志不删）。
+    const includeArchived =
+      settings.includeArchived ?? config.includeArchived ?? DEFAULT_INCLUDE_ARCHIVED
+    const candidates = await listSessionCandidates(resolveQuery(), 100, {
+      includeArchived,
+      archiveStateFile: config.archiveStateFile,
+    })
     // 实际会写到哪个文件（只读解析，不创建/不写入）。
     // 界面要能直接看到它，否则"填了目录却没写进去"这种问题只能靠猜。
     let logResolved
@@ -1705,6 +1775,7 @@ export function apply(ctx, config = {}) {
       // 日志落盘：null 表示"在目标会话目录下自动探测"，不是"关闭"
       logFile: settings.logFile ?? null,
       logOverwrite: settings.logOverwrite === true,
+      includeArchived,
       logCandidates: LOG_FILE_CANDIDATES,
       logResolved: logResolved ?? null,
       callerSessionId: callerId ?? null,
@@ -1802,9 +1873,14 @@ export function apply(ctx, config = {}) {
       // 取数与分界的可调项：settings 优先、config 次之、代码默认兜底。
       // 每次执行都重读一次，保证设置页刚改的值立即生效，不必重启插件。
       let tuning = resolveTuning(config)
+      // 归档开关：settings 优先、config 次之、默认包含。只影响读哪些会话。
+      let includeArchived = config.includeArchived ?? DEFAULT_INCLUDE_ARCHIVED
       try {
         const settingsForTuning = await readSettings(settingsFile)
         tuning = resolveTuning(config, settingsForTuning.tuning)
+        if (typeof settingsForTuning.includeArchived === 'boolean') {
+          includeArchived = settingsForTuning.includeArchived
+        }
       } catch {
         // 读不出设置就退回 config/默认值，不妨碍取数
       }
@@ -1871,7 +1947,7 @@ export function apply(ctx, config = {}) {
           }
         } else {
           const callerId = typeof exec === 'object' && exec && exec.agent ? exec.agent.id : undefined
-          sources = await collectSources(activeQuery, window, tuning, callerId)
+          sources = await collectSources(activeQuery, window, { ...tuning, includeArchived, archiveStateFile: config.archiveStateFile }, callerId)
         }
       } catch (error) {
         sources = { error: `取数失败：${error instanceof Error ? error.message : String(error)}`, sessions: [], sessionCount: 0 }
@@ -1939,7 +2015,8 @@ export function apply(ctx, config = {}) {
             tuning.maxEventsPerKind +
             ' 条」的旧规则。' +
             'sources.sessions[].coverage 里 raw* 是抽样前的真实条数、allocatedChars 是该会话分到的字符额度。' +
-            'raw 远大于实际条数时，说明你只看到了一部分：照实写已看到的，不要在正文里声称覆盖了全天全部内容。',
+            'raw 远大于实际条数时，说明你只看到了一部分：照实写已看到的，不要在正文里声称覆盖了全天全部内容。' +
+            'sources.archivedSkipped 大于 0 表示按设置排除了归档会话，属用户明确选择，正文不必解释。',
           noDateAsking: '不索要日期，不问今天是几号；日期只能来自 now。',
         },
         sources,
@@ -2054,6 +2131,7 @@ export function apply(ctx, config = {}) {
       'action=set_time 需要 time（HH:MM，写 24:00 表示次日 00:00）；' +
       'action=set_target 需要 targetSessionId（传 "auto" 恢复默认算法：在最近活跃的会话里触发）；' +
       'action=set_log 需要 logFile（相对目标会话目录的文件名或绝对路径；传 "auto" 回到自动探测）；' +
+      'action=set_archived 传 includeArchived（true/false：是否把已归档会话纳入取数，默认 true）；' +
       'action=reset_tuning 传要被重置的可调键，把该键改回代码默认值（如 key=["snippetChars"]）。' +
       '取数/分界的可调项直接以对象参数传入（set_tuning）：snippetChars（单条截取字符数 20–2000）、' +
       'maxEventsPerKind（每类事件采样条数 1–200）、charBudget（全局字符预算 50000–2000000，0 关闭）、maxSessions（扫描会话数 1–5000）、' +
@@ -2064,7 +2142,7 @@ export function apply(ctx, config = {}) {
       properties: {
         action: {
           type: 'string',
-          enum: ['get', 'set_time', 'set_target', 'set_log', 'set_tuning', 'reset_tuning'],
+          enum: ['get', 'set_time', 'set_target', 'set_log', 'set_archived', 'set_tuning', 'reset_tuning'],
           description: '要做什么。',
         },
         tuning: {
@@ -2078,6 +2156,11 @@ export function apply(ctx, config = {}) {
           type: 'array',
           items: { type: 'string' },
           description: '仅 reset_tuning 用：要恢复默认的可调键（数组）。',
+        },
+        includeArchived: {
+          type: 'boolean',
+          description:
+            '仅 set_archived 用：是否把已归档会话纳入取数（true = 包含，false = 跳过）。默认 true。',
         },
         time: {
           type: 'string',
@@ -2132,6 +2215,13 @@ export function apply(ctx, config = {}) {
         const saved = await applyLogSetting(settingsFile, !value || value === 'auto' ? '' : value, overwrite)
         const onlyLog = await describeSettings(callerId)
         return { ...onlyLog, ok: onlyLog.ok && saved !== false }
+      }
+
+      // set_archived：只动「是否包含已归档会话」这一项，不碰提醒。
+      if (action === 'set_archived') {
+        const saved = await applyArchivedSetting(settingsFile, input.includeArchived === true)
+        const onlyArchived = await describeSettings(callerId)
+        return { ...onlyArchived, ok: onlyArchived.ok && saved !== false }
       }
 
       // set_tuning：只动取数/分界可调项，不碰提醒。传入的为对象 { 键: 值 }。
@@ -2404,6 +2494,7 @@ export function apply(ctx, config = {}) {
           const intent = {}
           let mutation = false
           let logIntent
+          let archivedIntent
 
           if (line) {
             const space = line.search(/\s/)
@@ -2426,6 +2517,10 @@ export function apply(ctx, config = {}) {
               // `log 日志.txt` 指定文件名（相对目标会话目录，或绝对路径）；
               // `log auto` / 空值 = 回到自动探测
               logIntent = !value || value === 'auto' ? '' : value
+              mutation = true
+            } else if (verb === 'archived') {
+              // `archived on|off`：是否把已归档会话纳入取数（默认 on）
+              archivedIntent = !(value === 'off' || value === 'false' || value === '0')
               mutation = true
             } else if (verb === 'tuning') {
               // `tuning <key> <value>` 设置单个可调项；`tuning <key> default` 恢复默认；
@@ -2469,7 +2564,7 @@ export function apply(ctx, config = {}) {
                 text: JSON.stringify({ ...payload, ok: payload.ok, changed: [key] }),
               }
             } else {
-              return { kind: 'error', text: `未知指令：${verb}（支持 time / target / log / tuning）` }
+              return { kind: 'error', text: `未知指令：${verb}（支持 time / target / log / archived / tuning）` }
             }
           }
 
@@ -2479,6 +2574,7 @@ export function apply(ctx, config = {}) {
             ? await reconcileReminders(ctx, config, settingsFile, intent, callerId)
             : { ok: true }
           if (logIntent !== undefined) await applyLogSetting(settingsFile, logIntent)
+          if (archivedIntent !== undefined) await applyArchivedSetting(settingsFile, archivedIntent)
           const payload = await describeSettings(callerId)
           return {
             kind: 'success',

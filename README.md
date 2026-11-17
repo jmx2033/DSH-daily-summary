@@ -1,6 +1,6 @@
 # 每日总结（Daily Summary）· DSH 插件
 
-当前版本 **1.6.1**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
+当前版本 **1.7.0**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
 `index.js` 用 `createRequire` 读回来，不另写一份。
 
 以 [`docs/SKILL.md`](docs/SKILL.md)（终版，QA 10/10 通过）为唯一基准，
@@ -35,6 +35,7 @@
 | 1.5.1 | 侧边栏横栏改为内容自适应宽度，不再撑满整条侧栏 |
 | 1.6.0 | 取数改为**全局字符预算**（`charBudget`，默认 40 万字符）：按各会话原始字符量加权分配，每会话保底 40%、单会话封顶 25%；会话内按类别分层截断（用户 800 字、工具错误 400 字、助手 400 字、推理 300 字、工具调用 160 字），工具调用优先保留写/改类操作。`charBudget` 设为 0 退回「每类固定条数」的旧规则 |
 | 1.6.1 | 修 `daily_summary_settings` 返回体含 `undefined` 导致 DSH 报「not lossless JSON」：返回前统一清洗（命令路径此前被 `JSON.stringify` 掩盖，所以只有工具调用会失败） |
+| 1.7.0 | 新增「包含已归档会话」开关（默认开）：DSH 的归档只写 `workspace.json` 的 `archivedSessionIds`、日志不删，所以默认照样取数；关掉后取数与设置页候选都跳过归档会话。设置页、`archived on/off` 命令、工具 `action=set_archived` 三处同源 |
 
 ## 自动化：定时任务一天只交一份（分支结构）
 
@@ -115,6 +116,7 @@
 | 在哪条会话里触发 | 设置文件的 `targetSessionId` | 下拉框列出**所有工作区的全部会话**（按工作区分组、显示标题）；只保留目标会话那条，其余删除；`自动` 则回到"最近活跃会话" |
 | 产出后自动写入日志文件 | 设置文件的 `logFile` | 留空则在目标会话目录里自动探测；同一天默认不覆盖 |
 | 取数与分界（6 项） | 设置文件的 `tuning` | 字符预算、每类条数、截断长度、会话上限、日界钟点、迟到宽限，见下文「取数可调项」 |
+| 包含已归档会话 | 设置文件的 `includeArchived` | 默认开；关掉后取数与候选都跳过归档会话（归档只是界面隐藏，日志不删） |
 
 > 候选清单的坑一：`filterSessions` 的 `created-at` 过滤器要求 `to` 是**数字时间戳**，
 > 传 `new Date()` 会抛错并被 catch 吞成空列表——2026-10-23 实测设置页下拉框因此
@@ -134,8 +136,8 @@
 写回宿主走的是和横栏同一条通道：`ctx.remote.commands.execute(sessionId, '/daily-summary-settings …')`。
 一条操作三个调用方共用 Host 侧 `reconcileReminders`：
 
-1. **设置页**（`time HH:MM` / `target <id|auto>` / `log <文件|auto>` / `tuning <键> <值>`）
-2. **agent 工具** `daily_summary_settings`（`action: get | set_time | set_target | set_log | set_tuning | reset_tuning`）
+1. **设置页**（`time HH:MM` / `target <id|auto>` / `log <文件|auto>` / `archived on|off` / `tuning <键> <值>`）
+2. **agent 工具** `daily_summary_settings`（`action: get | set_time | set_target | set_log | set_archived | set_tuning | reset_tuning`）
 3. **`ensureSchedule`**（每次 `daily_summary` 调用时读设置文件决定时间与归属）
 
 > Client 侧没有独立的 RPC：设置页也要求先选中一个会话（要拿 `agent` 才能执行命令）。
@@ -184,7 +186,7 @@
 |---|---|---|
 | `daily_summary` | 第一步 + 第二步来源二 + 第四步 | 取一次运行时本地时间，按 **04:00 日界**切出三条互斥分支，算统计日 / 统计区间 / 抬头注记（含凌晨「切当天」例外所需的持久状态）；只读扫描统计区间内各会话日志，给出候选素材清单与覆盖面计数；按阈值生成逐字降级声明。 |
 | `daily_summary_selfcheck` | 第三步成文规则 + 输出自检 + 禁止事项 | 对已成文的四段纯文本做确定性检查：抬头逐字、四段标题各 1 次、注记带截至时刻、无「用户」/`@scene`/表格/围栏/加粗/HTML、默认不写来源。返回 `problems` 清单，`ok` 为真才可交付；同时在通过时写入日志文件。 |
-| `daily_summary_settings` | 自动化配置 | `action: get / set_time / set_target / set_log / set_tuning / reset_tuning`，读改触发时间、固定会话、日志落盘位置与取数可调项，与设置页共用同一份设置。 |
+| `daily_summary_settings` | 自动化配置 | `action: get / set_time / set_target / set_log / set_archived / set_tuning / reset_tuning`，读改触发时间、固定会话、日志落盘位置、归档开关与取数可调项，与设置页共用同一份设置。 |
 
 分工严格按需求 §7 的**铁律**：时间与区间只能算不能猜（插件算），正文只能写不能拼（模型写）。
 
@@ -209,7 +211,7 @@
 4. 生效后：侧边栏底部出现「每日总结」横栏，设置 → 左侧导航多出一页「每日总结」。
 
 > 包名带 `@local/` 前缀是本地包名，不发布到 npm；安装走目录，不需要联网。
-> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.6.1` 这样的版本号。
+> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.7.0` 这样的版本号。
 
 可选配置有两条路：**优先用设置页**（设置 → 每日总结 → 取数与分界），改动写进
 `settings.json` 的 `tuning` 分区并立即生效；`cordis.patch.yml` 的 `config` 是兜底，
@@ -298,6 +300,15 @@ Error: tool "daily_summary" returned invalid output: value is not lossless JSON
 单会话封顶 25%），会话内按类别切分额度（用户 40% / 助手 25% / 工具调用 15% /
 工具错误 12% / 推理 8%），再按类别分级截断（用户 800 字、错误 400、助手 400、
 推理 300、工具调用 160）。工具调用优先保留写/改类操作。
+
+另有一项非数值开关 **包含已归档会话**（`includeArchived`，默认 `true`）：
+
+- DSH 的归档只写进 `~/.dsh/storages/workspace.json` 的 `archivedSessionIds`，**日志一个都不删**
+  （2026-11-17 实测：32 个归档会话的日志目录全部还在），所以默认把它们也纳入取数；
+- 关掉后，取数与设置页的候选下拉框都会跳过这些会话；
+- 三种改法同上：设置页勾选框、`/daily-summary-settings archived on|off`、
+  `daily_summary_settings` 的 `action: set_archived`（传 `includeArchived: true|false`）；
+- 关掉时会在 `sources` 里用 `archivedSkipped` 如实报出被过滤掉的数量。
 
 ## 测试
 
