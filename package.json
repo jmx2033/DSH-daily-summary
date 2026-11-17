@@ -1,0 +1,43 @@
+{
+  "name": "@local/dsh-daily-summary",
+  "version": "1.6.1",
+  "type": "module",
+  "description": "每日总结：按日界回溯跨会话内容，产出四段式纯文本当日回顾。DSH 插件，含侧边栏横栏与设置页。",
+  "license": "MIT",
+  "author": "JMX2033",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "daily-summary",
+    "summary",
+    "journal"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "docs/SKILL.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node command-test.mjs && node smoke-test.mjs && node boundary-test.mjs && node branch-test.mjs && node schedule-migrate-test.mjs && node settings-test.mjs && node log-test.mjs && node budget-test.mjs && node sampling-test.mjs"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar"]
+    }
+  }
+}

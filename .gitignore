@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tgz
+
+# 运行期状态（插件默认写在 ~/.dsh/daily-summary/，这里防的是有人把它指到仓库里）
+*.jsonl
+*.jsonl.zstd
+state.json
+settings.json
+
+# 一次性诊断脚本
+diag-*.mjs
+unclip.mjs
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# 日志
+*.log
+npm-debug.log*
