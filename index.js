@@ -1278,6 +1278,21 @@ function selfCheck(text, window, alternates = [], options = {}) {
     if (hits !== 1) problems.push(`四段标题「${title}」应恰好出现 1 次，实际 ${hits} 次`)
   }
 
+  // 第 4 段换行写之后仍然不能用 - 起行，否则和一、二、三段混形。
+  {
+    const fourthTitle = FIXED_TITLES[FIXED_TITLES.length - 1]
+    const fourthStart = lines.findIndex((line) => line.trim() === fourthTitle)
+    if (fourthStart >= 0) {
+      const bodyLines = lines
+        .slice(fourthStart + 1)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      if (bodyLines.some((line) => line.startsWith('- '))) {
+        problems.push('第 4 段不用 - 起行：每个思考点直接写一句，靠换行区分')
+      }
+    }
+  }
+
   // 第 4 段句数下界：素材里确实有可回看的思考时（thinkingAvailable），
   // 只写一句就算不合格 —— 这是「明明有好几点却只写一个」的机检兜底。
   if (options.thinkingAvailable === true) {
@@ -2083,7 +2098,7 @@ export function apply(ctx, config = {}) {
         sectionRules: [
           '第 1、2、3 段每条以 - 起行，一事一条，每段真实事件 0 到 5 条；语料里没有这一方面时写 - 今天没有记录到这方面的事，那不是条目、不计条数、也不算空段。',
           '第 2 段两类都在时「充实：」「收获：」前缀都出现；只有一类时只出现对应的那一个前缀，不新开段。',
-          '第 4 段不用 - 起行，直接写 2 到 3 句：每句一个独立的思考点，不许把两个点并成一句。没有可回看的思考时写 今天没有记录到可以回看的思考。',
+          '第 4 段不用 - 起行，每个思考点单独一行：2 到 3 行，每行一句、一个独立的点，行与行之间不换空行。没有可回看的思考时写 今天没有记录到可以回看的思考。',
           '段与段之间空一行；段标题顶格，标题行后不留空行直接接第一条。',
           '全文固定第一人称视角；正文任何一行都不出现 @、场景编号、引号包裹的主题词。',
           '语料默认不附出处；仅当对方明确指出某条与事实不符、或质疑某条不实、或要求核对出处时，才对被质疑的那一条附出处，其余条目不增不改；找不到依据就直说依据不足并建议删掉，禁止现造出处。',

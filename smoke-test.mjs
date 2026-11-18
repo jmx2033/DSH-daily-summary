@@ -381,6 +381,17 @@ assert.equal(thickCheck.ok, true, JSON.stringify(thickCheck.problems))
 // 未开启 thinkingAvailable 时保持旧行为：一句也放行（素材不足时不硬凑）
 assert.equal(pass.ok, true, '未开启时不应因句数报错')
 
+// 第 4 段换成多行后仍不许用 - 起行
+const dashFourth = good.replace('规则能照着走通，才算写完。', '- 规则能照着走通。')
+const dashCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: dashFourth }, {})
+assert.equal(dashCheck.ok, false, '第 4 段用 - 起行应报错')
+assert.ok(
+  dashCheck.problems.some((problem) => problem.includes('第 4 段不用 - 起行')),
+  JSON.stringify(dashCheck.problems),
+)
+
 // 均匀采样：必须覆盖首尾，不能等价于"只取最后 N 条"
 // （2026-10-31 实测：某会话当天 133 条用户消息只进来最后 8 条，上午中午全丢）
 {
