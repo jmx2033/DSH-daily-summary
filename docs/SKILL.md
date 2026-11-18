@@ -3,7 +3,7 @@ name: daily-summary
 description: 把当天散落在多个会话里的事收成一份四段式纯文本当日回顾。当对方说「每日总结」「帮我每日总结一下」「来个每日总结」等近义说法、要现在就出一份今天的总结时使用；若只是在讨论这个功能的格式、开发或命名，不要使用。
 description_zh: 一句话唤起，自动取当前时间、按日界回溯跨会话内容，输出四段式可直接复制的纯文本当日总结。仅在要现在出一份今天的总结时唤起，讨论这个功能本身不触发。
 description_en: Collect what happened across today's conversations into a four-part, copy-ready plain-text daily review. Use it when the user says a daily-summary phrase and wants today's summary right now. Do not use it when the topic is the feature itself.
-version: 1.9.0
+version: 1.9.1
 author: JMX2033
 ---
 

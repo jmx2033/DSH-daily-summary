@@ -383,6 +383,26 @@ const FIXED_TITLES = [
   '4.今日份思考',
 ]
 
+/** 第 4 段行数下界与上界。文案、自检、参数描述都从这里取，改数字只改这两行。 */
+const FOURTH_SECTION_MIN_LINES = 2
+const FOURTH_SECTION_MAX_LINES = 3
+
+/**
+ * 第 4 段「今日份思考」的成文规则 —— **单一真相**。
+ *
+ * 2026-11-18 实测的教训：这条规则曾散在 `sectionRules`、`selfCheckHint`、
+ * schema 描述、`selfCheck` 代码里，48 小时内改了 4 次（加下界 → 改分行 → 改计数口径），
+ * 每次都要记着改 4 个地方，漏一处就是「规则说分行、代码数句号」那种冲突。
+ *
+ * 现在收敛成这一个常量，其余三处都从它派生（第 2、3 处是拼进去的子串）。
+ * 行数区间也由上面的上下界常量拼出来，改数字只改那两行。
+ * `docs/SKILL.md` 是人工维护的 markdown，由 tests 断言关键片段一致，不做生成。
+ */
+const FOURTH_SECTION_RULE =
+  '第 4 段不用 - 起行，每个思考点单独一行：' +
+  `${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 行，每行一句、一个独立的点，` +
+  '行与行之间不换空行。没有可回看的思考时写 今天没有记录到可以回看的思考。'
+
 const EMPTY_LINE = '- 今天没有记录到这方面的事'
 const EMPTY_THOUGHT = '今天没有记录到可以回看的思考。'
 const NOTICE_THIN_PREFIX = '说明：今日可回溯内容有限，实际覆盖 '
@@ -1328,7 +1348,9 @@ function selfCheck(text, window, alternates = [], options = {}) {
   // 第 4 段句数下界：素材里确实有可回看的思考时（thinkingAvailable），
   // 只写一句就算不合格 —— 这是「明明有好几点却只写一个」的机检兜底。
   if (options.thinkingAvailable === true) {
-    const min = Number.isInteger(options.minThinkingSentences) ? options.minThinkingSentences : 2
+    const min = Number.isInteger(options.minThinkingSentences)
+      ? options.minThinkingSentences
+      : FOURTH_SECTION_MIN_LINES
     const fourthTitle = FIXED_TITLES[FIXED_TITLES.length - 1]
     const start = lines.findIndex((line) => line.trim() === fourthTitle)
     if (start >= 0) {
@@ -1344,7 +1366,7 @@ function selfCheck(text, window, alternates = [], options = {}) {
           .filter((line) => line.length > 0).length
         if (counts < min) {
           problems.push(
-            `第 4 段只有 ${counts} 行：素材里有可回看的思考时应写 ${min} 到 3 行，每行一个独立的点`,
+            `第 4 段只有 ${counts} 行：素材里有可回看的思考时应写 ${min} 到 ${FOURTH_SECTION_MAX_LINES} 行，每行一个独立的点`,
           )
         }
       }
@@ -1772,6 +1794,9 @@ export {
   KIND_SHARE,
   pickThinkingHints,
   shareText,
+  FOURTH_SECTION_RULE,
+  FOURTH_SECTION_MIN_LINES,
+  FOURTH_SECTION_MAX_LINES,
 }
 
 export function apply(ctx, config = {}) {
@@ -2139,7 +2164,7 @@ export function apply(ctx, config = {}) {
         sectionRules: [
           '第 1、2、3 段每条以 - 起行，一事一条，每段真实事件 0 到 5 条；语料里没有这一方面时写 - 今天没有记录到这方面的事，那不是条目、不计条数、也不算空段。',
           '第 2 段两类都在时「充实：」「收获：」前缀都出现；只有一类时只出现对应的那一个前缀，不新开段。',
-          '第 4 段不用 - 起行，每个思考点单独一行：2 到 3 行，每行一句、一个独立的点，行与行之间不换空行。没有可回看的思考时写 今天没有记录到可以回看的思考。',
+          FOURTH_SECTION_RULE,
           '段与段之间空一行；段标题顶格，标题行后不留空行直接接第一条。',
           '全文固定第一人称视角；正文任何一行都不出现 @、场景编号、引号包裹的主题词。',
           '语料默认不附出处；仅当对方明确指出某条与事实不符、或质疑某条不实、或要求核对出处时，才对被质疑的那一条附出处，其余条目不增不改；找不到依据就直说依据不足并建议删掉，禁止现造出处。',
@@ -2167,11 +2192,12 @@ export function apply(ctx, config = {}) {
         thinkingAvailable: {
           type: 'boolean',
           description:
-            '取数结果里 thinkingHints 非空时传 true：要求第 4 段至少写 2 行，只写一行会被判为不合格。',
+            `取数结果里 thinkingHints 非空时传 true：要求第 4 段至少写 ${FOURTH_SECTION_MIN_LINES} 行，` +
+            '只写一行会被判为不合格。',
         },
         minThinkingSentences: {
           type: 'number',
-          description: '第 4 段最少的行数，默认 2，允许 1–3。',
+          description: `第 4 段最少的行数，默认 ${FOURTH_SECTION_MIN_LINES}，允许 1–${FOURTH_SECTION_MAX_LINES}。`,
         },
       },
       required: ['text'],

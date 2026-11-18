@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import {
   pickWithinQuota,
   pickToolCalls,
@@ -6,6 +7,9 @@ import {
   toLosslessJson,
   pickThinkingHints,
   shareText,
+  FOURTH_SECTION_RULE,
+  FOURTH_SECTION_MIN_LINES,
+  FOURTH_SECTION_MAX_LINES,
   KIND_SHARE,
   CLIP_BY_KIND,
   DEFAULT_CHAR_BUDGET,
@@ -140,5 +144,29 @@ for (const [key, ratio] of Object.entries(KIND_SHARE)) {
   )
 }
 assert.equal(shareLine, '用户指令 36%、助手回复 22%、工具调用 14%、工具错误 13%、推理 15%')
+
+// 12) 第 4 段规则的单一真相：常量与 SKILL.md 必须一致
+//     （不做文档生成 —— 用断言守住漂移，比引入生成管线简单得多）
+assert.ok(FOURTH_SECTION_RULE.includes('每个思考点单独一行'), '常量应包含分行要求')
+assert.ok(FOURTH_SECTION_RULE.includes('不用 - 起行'), '常量应包含禁用 - 的约束')
+assert.ok(
+  FOURTH_SECTION_RULE.includes(`${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 行`),
+  '常量的行数区间应与上下界常量一致',
+)
+assert.ok(FOURTH_SECTION_MIN_LINES < FOURTH_SECTION_MAX_LINES, '下界应小于上界')
+
+{
+  const skill = await readFile(new URL('./docs/SKILL.md', import.meta.url), 'utf8')
+  // SKILL.md 里那条规则是人工写的 markdown，抽取关键片段比对
+  const skillLine = skill
+    .split('\n')
+    .find((line) => line.includes('第 4 段不用 - 起行'))
+  assert.ok(skillLine, 'SKILL.md 应有一条第 4 段规则')
+  assert.ok(skillLine.includes('每个思考点单独一行'), 'SKILL.md 必须同代码一样要求分行')
+  assert.ok(
+    skillLine.includes(`${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 行`),
+    `SKILL.md 的行数区间必须与代码一致（${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES}）：${skillLine}`,
+  )
+}
 
 console.log('sampling-test: all assertions passed')
