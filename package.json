@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-daily-summary",
-  "version": "1.8.2",
+  "version": "1.9.0",
   "type": "module",
   "description": "每日总结：按日界回溯跨会话内容，产出四段式纯文本当日回顾。DSH 插件，含侧边栏横栏与设置页。",
   "license": "MIT",

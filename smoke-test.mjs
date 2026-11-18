@@ -47,6 +47,16 @@ const logs = {
     session: { id: 'session-shell', createdAt: now - 45 * 60 * 1000 },
     events: [
       { type: 'user/message', time: now - 40 * 60 * 1000, data: { content: [{ type: 'text', text: '   ' }] } },
+      // 锚点回归：插件注入的时间锚点同样是 user 角色，但过滤后不得算作素材——
+      // 若这里被判「有素材」，下方「空壳会话不得出现在 sessions」的断言会失败。
+      {
+        type: 'user/message',
+        time: now - 40 * 60 * 1000,
+        data: {
+          content: [{ type: 'text', text: '[时间锚点] 本轮对话的开始时刻：2026-11-18T09:00:00+08:00（本地时区）。' }],
+          source: { kind: 'time-feeling', form: 'anchor' },
+        },
+      },
       { type: 'assistant/message', time: now - 39 * 60 * 1000, data: { message: { content: [{ type: 'text', text: '' }] } } },
       { type: 'tool/call', time: now - 38 * 60 * 1000, data: { name: '', arguments: '' } },
       { type: 'assistant/message', time: now - 37 * 60 * 1000, data: { message: { content: [{ type: 'reasoning', text: '\n\t ' }] } } },
@@ -57,13 +67,49 @@ const logs = {
     events: [{ type: 'user/message', time: now - 1200_000, data: { content: [{ type: 'text', text: '这条没有 cwd 也没有标题' }] } }],
   },
   // 跨工作区用例：完全不同的 cwd，当天也有素材，必须被汇总进来
+  // 同时覆盖「真人消息要留、锚点消息要滤」的四种形态：
+  //   source.kind === 'user'  → 留（显式真人）
+  //   source 缺失             → 留（向后兼容：老日志不写 source）
+  //   source.kind === 'time-feeling' / 'runtime-context' → 滤（插件注入）
   'session-other-workspace': {
     session: { id: 'session-other-workspace', createdAt: now - 40 * 60 * 1000, cwd: 'E:/another-workspace' },
     events: [
       {
         type: 'user/message',
         time: now - 35 * 60 * 1000,
-        data: { content: [{ type: 'text', text: '另一个工作区里做的事' }] },
+        data: {
+          content: [{ type: 'text', text: '另一个工作区里做的事' }],
+          source: { kind: 'user', form: 'input' },
+        },
+      },
+      {
+        type: 'user/message',
+        time: now - 34 * 60 * 1000,
+        data: { content: [{ type: 'text', text: '老日志里的消息没有 source 字段' }] },
+      },
+      {
+        type: 'user/message',
+        time: now - 33 * 60 * 1000,
+        data: {
+          content: [{ type: 'text', text: '[时间锚点] 本轮对话的开始时刻：2026-11-18T09:00:00+08:00（本地时区）。' }],
+          source: { kind: 'time-feeling', form: 'anchor' },
+        },
+      },
+      {
+        type: 'user/message',
+        time: now - 32 * 60 * 1000,
+        data: {
+          content: [{ type: 'text', text: 'Current runtime context. This snapshot supersedes earlier snapshots.' }],
+          source: { kind: 'runtime-context', form: 'inject' },
+        },
+      },
+      {
+        type: 'user/message',
+        time: now - 31 * 60 * 1000,
+        data: {
+          content: [{ type: 'text', text: '这是一段上下文压缩摘要，浓缩了当天早些时候的工作。' }],
+          source: { kind: 'compact-checkpoint', form: 'inject' },
+        },
       },
     ],
   },
@@ -163,6 +209,25 @@ assert.ok(
 assert.equal(res.sources.shellSessions, 1, '空壳会话单独计数，便于核对为什么少了')
 assert.equal(res.sources.sessions[0].sessionId, 'session-current')
 assert.equal(res.sources.sessions[0].userMessages.length, 1, '区间外事件必须被排除')
+
+// 插件注入的伪用户消息必须被滤掉，真人消息（含无 source 的老日志）必须保留。
+{
+  const other = res.sources.sessions.find((s) => s.sessionId === 'session-other-workspace')
+  assert.ok(other, '跨工作区会话应在结果里')
+  assert.deepEqual(
+    other.userMessages,
+    ['另一个工作区里做的事', '老日志里的消息没有 source 字段', '这是一段上下文压缩摘要，浓缩了当天早些时候的工作。'],
+    'source.kind=user、source 缺失、compact-checkpoint 都要留；其余注入的要滤',
+  )
+  assert.ok(
+    !other.userMessages.some((text) => text.includes('[时间锚点]')),
+    '时间锚点不得进入素材',
+  )
+  assert.ok(
+    !other.userMessages.some((text) => text.includes('runtime context')),
+    '运行时上下文注入不得进入素材',
+  )
+}
 assert.equal(res.sources.sessions[0].toolErrors.length, 1)
 assert.equal(res.sources.sessions[0].eventCount, 5, '失败的工具调用也是素材，计入 eventCount')
 assert.equal(res.sources.sessions[0].sourceName, '【session-current】的标题', '来源名落到会话标题')

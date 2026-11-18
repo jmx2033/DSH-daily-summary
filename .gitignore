@@ -12,6 +12,7 @@ settings.json
 # 一次性诊断脚本
 diag-*.mjs
 unclip.mjs
+probe-*.mjs
 
 # 编辑器 / 系统
 .DS_Store

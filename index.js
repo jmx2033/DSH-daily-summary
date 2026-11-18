@@ -630,6 +630,13 @@ function shareText() {
     .join('、')
 }
 
+/** 允许进入「用户消息」素材的来源。
+ *  `user`：真人手打的输入。
+ *  `compact-checkpoint`：上下文压缩摘要，是当天工作的浓缩，保留。
+ *  其余（time-feeling / time-context / runtime-context / schedule / plugin:* /
+ *  model-selection / skill-catalog …）都是插件注入的模板，一律丢掉。 */
+const USER_MESSAGE_KINDS = new Set(['user', 'compact-checkpoint'])
+
 /** 工具调用里出现这些词，说明它"改动了东西"，比只读命令更值得留。 */
 const WRITE_HINT = /(write|edit|apply_patch|patch|mkdir|rmdir|git |npm |node |bash|powershell)/i
 
@@ -894,6 +901,16 @@ async function collectSources(query, window, options, selfSessionId) {
       const data = event.data ?? {}
       switch (event.type) {
         case 'user/message': {
+          // 只收真人输入 + 压缩摘要。2026-11-18 实测某会话 730 条 user/message 的来源分布：
+          //   user 193 · time-feeling 222 · time-context 140 · schedule 43 ·
+          //   plugin:hindsight 40 · runtime-context 31 · model-selection 27 · 其余若干
+          // 也就是说**只有 26% 是真人说的话**，其余都是插件注入的锚点/提醒/上下文，
+          // 混进素材会污染总结，还会让只有注入消息的空壳会话被误判成「有素材」。
+          //
+          // 判据用**白名单**而不是黑名单：新插件随时会引入新 kind，
+          // 黑名单永远列不全。`undefined` 放行是为了兼容不写 source 的老日志。
+          const producer = data.message?.source?.kind ?? data.source?.kind
+          if (producer !== undefined && !USER_MESSAGE_KINDS.has(producer)) break
           const text = readBlocks(data).join('\n')
           if (text.trim()) buckets.user.push(text)
           break
