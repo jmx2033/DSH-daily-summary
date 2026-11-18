@@ -31,7 +31,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -105,6 +105,18 @@ const CLIP_BY_KIND = {
 
 /** 「凌晨切当天」例外需要持久状态：只在 SKILL.md 里记为技术债，插件里补上。 */
 const DEFAULT_STATE_FILE = path.join(homedir(), '.dsh', 'daily-summary', 'state.json')
+
+/**
+ * 取数快照目录。
+ *
+ * 为什么需要：DSH 里「删除对话」会真的删掉会话索引
+ * （`DELETE FROM persisted_sessions / persisted_docs`），插件再取数就看不到那些会话了。
+ * 已经写进 `日志.txt` 的总结不受影响，但「当天还没产出总结就先删了对话」会永久丢素材。
+ * 所以每次取数把素材另存一份 JSON，留 3 天，用来应对误删。
+ */
+const DEFAULT_SNAPSHOT_DIR = path.join(homedir(), '.dsh', 'daily-summary', 'snapshots')
+/** 快照留存天数：超过这个天数的快照在下次取数时清掉。 */
+const SNAPSHOT_RETENTION_DAYS = 3
 
 /** 会话日志根目录（`~/.dsh/sessions`）。命令 handler 找不到 agent 时用它定位会话。 */
 const DEFAULT_SESSIONS_ROOT = path.join(homedir(), '.dsh', 'sessions')
@@ -773,6 +785,47 @@ function buildSessionPayload(item, { quota, maxEventsPerKind, snippetChars }) {
     sampled: bucketTotals(buckets) > payload.eventCount,
   }
   return payload
+}
+
+/**
+ * 把一次取数的素材落盘成快照，并按留存天数清理旧文件。
+ *
+ * 只读会话日志，不改动它们；快照是插件自己的产物，写在自己的目录里。
+ * 失败不影响取数本身（记一条 warn 就够），所以这里吞掉异常。
+ *
+ * @returns {{written: boolean, path: string|null, pruned: number}}
+ */
+async function writeSnapshot(dir, date, sources) {
+  const target = path.join(dir, `${date}.json`)
+  let pruned = 0
+  try {
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      target,
+      `${JSON.stringify({ date, savedAt: new Date().toISOString(), sources }, null, 2)}\n`,
+      'utf8',
+    )
+  } catch {
+    return { written: false, path: null, pruned: 0 }
+  }
+
+  // 清理过期快照：按文件名里的日期判断，比 mtime 更可靠（复制文件会改 mtime）。
+  try {
+    const cutoff = new Date(`${date}T00:00:00Z`)
+    cutoff.setUTCDate(cutoff.getUTCDate() - SNAPSHOT_RETENTION_DAYS)
+    const cutoffKey = cutoff.toISOString().slice(0, 10)
+    const names = await readdir(dir)
+    for (const name of names) {
+      const match = /^(\d{4}-\d{2}-\d{2})\.json$/.exec(name)
+      if (!match) continue
+      if (match[1] >= cutoffKey) continue
+      await unlink(path.join(dir, name))
+      pruned += 1
+    }
+  } catch {
+    // 清不掉旧文件不是失败，下次再清
+  }
+  return { written: true, path: target, pruned }
 }
 
 /**
@@ -1794,6 +1847,8 @@ export {
   KIND_SHARE,
   pickThinkingHints,
   shareText,
+  writeSnapshot,
+  SNAPSHOT_RETENTION_DAYS,
   FOURTH_SECTION_RULE,
   FOURTH_SECTION_MIN_LINES,
   FOURTH_SECTION_MAX_LINES,
@@ -2089,6 +2144,12 @@ export function apply(ctx, config = {}) {
         sources = { error: `取数失败：${error instanceof Error ? error.message : String(error)}`, sessions: [], sessionCount: 0 }
       }
 
+      // 素材快照：DSH 删除对话会真的删掉会话索引，之后再也读不到那些会话。
+      // 这里把本次素材另存一份，留 SNAPSHOT_RETENTION_DAYS 天，用于误删后重跑总结。
+      // 写失败不影响本次取数（只影响事后重跑），所以静默降级。
+      const snapshotDir = config.snapshotDir || DEFAULT_SNAPSHOT_DIR
+      const snapshot = await writeSnapshot(snapshotDir, window.date, sources)
+
       const eventCount = Number.isInteger(input.deliveredEvents) ? Math.max(0, input.deliveredEvents) : undefined
       const coveredSessions = Number.isInteger(input.deliveredSessions) ? Math.max(0, input.deliveredSessions) : 0
       const notice =
@@ -2160,6 +2221,13 @@ export function apply(ctx, config = {}) {
           noDateAsking: '不索要日期，不问今天是几号；日期只能来自 now。',
         },
         sources,
+        // 素材快照的落盘结果：written=false 时说明这次没能存下来（不影响本次总结）。
+        snapshot: {
+          written: snapshot.written,
+          path: snapshot.path,
+          pruned: snapshot.pruned,
+          retentionDays: SNAPSHOT_RETENTION_DAYS,
+        },
         sections: FIXED_TITLES,
         sectionRules: [
           '第 1、2、3 段每条以 - 起行，一事一条，每段真实事件 0 到 5 条；语料里没有这一方面时写 - 今天没有记录到这方面的事，那不是条目、不计条数、也不算空段。',

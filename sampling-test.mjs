@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import {
   pickWithinQuota,
   pickToolCalls,
@@ -7,6 +9,8 @@ import {
   toLosslessJson,
   pickThinkingHints,
   shareText,
+  writeSnapshot,
+  SNAPSHOT_RETENTION_DAYS,
   FOURTH_SECTION_RULE,
   FOURTH_SECTION_MIN_LINES,
   FOURTH_SECTION_MAX_LINES,
@@ -167,6 +171,32 @@ assert.ok(FOURTH_SECTION_MIN_LINES < FOURTH_SECTION_MAX_LINES, '下界应小于�
     skillLine.includes(`${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 行`),
     `SKILL.md 的行数区间必须与代码一致（${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES}）：${skillLine}`,
   )
+}
+
+// 13) 素材快照：写入当天文件，并按 3 天留存清理更早的
+{
+  const dir = await mkdtemp(path.join(tmpdir(), 'ds-snapshot-'))
+  const mk = (date) => path.join(dir, `${date}.json`)
+  // 预置：3 天前的应该留（边界内）、4 天前的应该删
+  await writeFile(mk('2026-11-14'), '{"old":true}', 'utf8') // 超出留存
+  await writeFile(mk('2026-11-15'), '{"edge":true}', 'utf8') // 恰好在上界内
+
+  const result = await writeSnapshot(dir, '2026-11-18', { sessions: [{ sessionId: 'a' }] })
+  assert.equal(result.written, true)
+  assert.ok(result.path && result.path.endsWith('2026-11-18.json'))
+
+  const saved = JSON.parse(await readFile(mk('2026-11-18'), 'utf8'))
+  assert.equal(saved.date, '2026-11-18')
+  assert.ok(saved.savedAt, '应记录落盘时间')
+  assert.deepEqual(saved.sources.sessions, [{ sessionId: 'a' }], '素材应完整保存')
+
+  const names = (await readdir(dir)).filter((n) => n.endsWith('.json')).sort()
+  assert.ok(names.includes('2026-11-18.json'), '当天快照必须存在')
+  assert.ok(names.includes('2026-11-15.json'), '3 天内的要留')
+  assert.ok(!names.includes('2026-11-14.json'), '超过 3 天的要清掉')
+  assert.equal(result.pruned, 1, '应清理 1 个过期快照')
+
+  assert.ok(SNAPSHOT_RETENTION_DAYS === 3, '留存天数应为 3')
 }
 
 console.log('sampling-test: all assertions passed')

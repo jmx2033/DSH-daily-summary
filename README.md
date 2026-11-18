@@ -1,6 +1,6 @@
 # 每日总结（Daily Summary）· DSH 插件
 
-当前版本 **1.9.1**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
+当前版本 **1.10.0**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
 `index.js` 用 `createRequire` 读回来，不另写一份。
 
 以 [`docs/SKILL.md`](docs/SKILL.md)（终版，QA 10/10 通过）为唯一基准，
@@ -41,6 +41,7 @@
 | 1.8.2 | 修两处自检与文案的缺陷：①第 4 段行数统计从「数句号」改为「数非空行」，否则三行都不带句号会被误判成 0 行；②采样文案里的配额百分比改为运行时从 `KIND_SHARE` 拼装，不再手写（此前写死「推理 8%」，实际已是 15%） |
 | 1.9.0 | 用户消息只收真人输入与压缩摘要：实测某会话 730 条 `user/message` 里真人才 193 条（26%），其余都是 time-feeling / time-context / runtime-context / schedule / plugin:* 等插件注入的模板。改为按 `source.kind` 白名单（`user` + `compact-checkpoint`）过滤，`undefined` 仍放行以兼容老日志 |
 | 1.9.1 | 第 4 段规则收敛成单一真相：`FOURTH_SECTION_RULE` + 上下界常量，`sectionRules`、`selfCheckHint`、参数描述、自检提示全从它派生；行数区间也由上下界拼出，改数字只改两行。`docs/SKILL.md` 不做生成，改用测试断言关键片段一致（防止文档漂移） |
+| 1.10.0 | 素材快照：每次取数把素材另存 `~/.dsh/daily-summary/snapshots/<日期>.json`，留 3 天后自动清理。DSH 里「删除对话」会真的删掉会话索引（`DELETE FROM persisted_sessions`），之后再取数就看不到那些会话；有快照就能在误删后重跑当天总结。已写进 `日志.txt` 的总结不受删除影响 |
 
 ## 自动化：定时任务一天只交一份（分支结构）
 
@@ -216,7 +217,7 @@
 4. 生效后：侧边栏底部出现「每日总结」横栏，设置 → 左侧导航多出一页「每日总结」。
 
 > 包名带 `@local/` 前缀是本地包名，不发布到 npm；安装走目录，不需要联网。
-> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.9.1` 这样的版本号。
+> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.10.0` 这样的版本号。
 
 可选配置有两条路：**优先用设置页**（设置 → 每日总结 → 取数与分界），改动写进
 `settings.json` 的 `tuning` 分区并立即生效；`cordis.patch.yml` 的 `config` 是兜底，
@@ -271,6 +272,24 @@ settings 里没写的项才取它。
 
 真人只占 26%，不过滤会让总结里混满插件模板。用白名单而非黑名单：新插件随时引入新
 `kind`，黑名单永远列不全。`source` 缺失（老日志）时放行。
+
+### 素材快照与「删除对话」的关系（1.10.0）
+
+DSH 里删会话会真的删掉索引（`dsh-session-query-sqlite` 的 `DELETE FROM persisted_sessions
+/ persisted_docs`），插件的取数走 `sessionQuery.filterSessions`，所以**删掉的对话之后再也取不到**。
+归档（`archivedSessionIds`）只隐藏界面，日志不删，不受影响。
+
+为了兜住误删，每次取数会把素材另存一份：
+
+```
+~/.dsh/daily-summary/snapshots/2026-11-18.json
+```
+
+- 内容：该次取数的完整 `sources`（会话清单、采样后的各类素材、coverage、thinkingHints）
+- 留存：**3 天**，每次取数时顺带清掉更早的（按文件名日期判断，不依赖 mtime）
+- 写失败不影响本次取数，`daily_summary` 返回的 `snapshot.written` 会如实反映
+
+已写进日志文件的总结是独立纯文本，**不受删除对话影响**；快照解决的是「当天还没产出总结就先删了对话」。
 
 ### 空壳会话不计入覆盖面
 
