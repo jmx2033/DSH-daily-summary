@@ -4,6 +4,8 @@ import {
   pickToolCalls,
   buildSessionPayload,
   toLosslessJson,
+  pickThinkingHints,
+  KIND_SHARE,
   CLIP_BY_KIND,
   DEFAULT_CHAR_BUDGET,
 } from './index.js'
@@ -96,5 +98,35 @@ assert.deepEqual(clean.d, [1, null, { f: 'ok' }])
 assert.deepEqual(clean.g, { i: 3 })
 assert.equal(clean.j, 'text')
 assert.doesNotThrow(() => JSON.stringify(clean))
+
+// 9) 五类配额总和为 1，思考类不低于 15%（第 4 段要写 2-3 个点）
+const shareSum = Object.values(KIND_SHARE).reduce((sum, value) => sum + value, 0)
+assert.ok(Math.abs(shareSum - 1) < 1e-9, `配额总和应为 1，实际 ${shareSum}`)
+assert.ok(KIND_SHARE.reasoning >= 0.15, '思考类配额应提到 15%')
+
+// 10) 思考候选：过滤过短、去重、最多 5 条、按因果密度+长度排序
+const filler = (piece) => piece.repeat(20)
+const hints = pickThinkingHints(
+  [
+    { reasoning: ['先看看', filler('这里有个很长的过程性思考。')] },
+    {
+      reasoning: [
+        `其实问题在于配置写错了，${filler('所以')}`,
+        `其实问题在于配置写错了，${filler('所以')}`,
+        filler('另一条很长的记录'),
+      ],
+    },
+  ],
+  5,
+)
+assert.ok(hints.length > 0, '应有候选')
+assert.ok(hints.length <= 5, '最多 5 条')
+assert.equal(new Set(hints).size, hints.length, '不应有重复')
+assert.ok(hints.every((text) => text.length <= 220), '每条不超过 220 字')
+assert.equal(pickThinkingHints([{ reasoning: ['短'] }]).length, 0, '过短的思考不算候选')
+assert.ok(
+  hints[0].includes('其实问题在于'),
+  '讲因果/结论的思考应排在流水账式思考前面',
+)
 
 console.log('sampling-test: all assertions passed')

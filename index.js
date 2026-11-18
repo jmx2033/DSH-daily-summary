@@ -587,13 +587,15 @@ const bucketCharTotal = (buckets) =>
   buckets.assistant.reduce((sum, text) => sum + text.length, 0) +
   buckets.reasoning.reduce((sum, text) => sum + text.length, 0)
 
-/** 会话额度里每类素材各占的比例：用户指令最值钱，推理过程最省。 */
+/** 会话额度里每类素材各占的比例：用户指令最值钱，推理过程最省。
+ *  2026-11-18：reasoning 从 8% 提到 15% —— 第 4 段「今日份思考」要写 2-3 个点，
+ *  原配额常常只够看到一两条思考，模型自然只写一句。 */
 const KIND_SHARE = {
-  user: 0.4,
-  assistant: 0.25,
-  toolCalls: 0.15,
-  toolErrors: 0.12,
-  reasoning: 0.08,
+  user: 0.36,
+  assistant: 0.22,
+  toolCalls: 0.14,
+  toolErrors: 0.13,
+  reasoning: 0.15,
 }
 
 /** 单类素材条数的硬上限，防止预算大时把整个会话倒进提示词。 */
@@ -648,6 +650,37 @@ function pickToolCalls(list, quotaChars, clipLen, cap = MAX_EVENTS_HARD_CAP) {
  *   - 有额度（charBudget > 0）：按 KIND_SHARE 切分，逐类分级截断；
  *   - 无额度（charBudget = 0）：退回旧行为，每类 maxEventsPerKind 条、统一 snippetChars。
  */
+/** 思考素材里出现这些词，说明它在讲「为什么/发现了什么」，比流水账式的推理更值得回看。 */
+const THINKING_HINT = /(因为|所以|其实|发现|关键|原来|意识到|问题在于|根因|值得|教训|结论|应该|不该)/g
+
+/**
+ * 从各会话的思考素材里挑出「可回看的思考点」候选。
+ *
+ * 为什么要单独挑：第 4 段要求写 2-3 个思考点，但 reasoning 动辄几百上千条，
+ * 混在 sources 里靠模型自己翻，多数情况下它只抓一条就交代过去了。
+ * 这里先按「是否在讲因果/结论」+ 长度排个序，给模型一份 5 条以内的候选清单。
+ */
+function pickThinkingHints(entries, limit = 5) {
+  const seen = new Set()
+  const scored = []
+  for (const entry of entries) {
+    for (const raw of entry.reasoning || []) {
+      const text = String(raw).replace(/\s+/g, ' ').trim()
+      // 太短的多半是「先看一下」「然后再试」这类过程性思考，不构成回看点。
+      if (text.length < 40) continue
+      const key = text.slice(0, 60)
+      if (seen.has(key)) continue
+      seen.add(key)
+      const hits = (text.match(THINKING_HINT) || []).length
+      scored.push({ text, score: hits * 1000 + Math.min(text.length, 600) })
+    }
+  }
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((item) => clip(item.text, 220))
+}
+
 function buildSessionPayload(item, { quota, maxEventsPerKind, snippetChars }) {
   const buckets = item.buckets
   const budgeted = quota > 0
@@ -994,6 +1027,8 @@ async function collectSources(query, window, options, selfSessionId) {
       title: 'sessionQuery.readTitleSnapshots(ids)',
     },
     sessions: entries,
+    // 第 4 段「今日份思考」的候选清单：按「是否在讲因果/结论」+ 长度排序，最多 5 条。
+    thinkingHints: pickThinkingHints(entries),
     caveat: {
       currentSessionZeroReturn:
         '当前会话的内容以本会话上下文为准；这里的清单只是辅助核对，检索结果对当前会话可能为空或与上下文重复，属已知现象，不是故障。',
@@ -1226,7 +1261,7 @@ function buildNotice({ eventCount, sessionCount: coveredSessions, hasUncertain }
  * 输出自检：把 SKILL.md「输出自检」6 条与「禁止事项」里可机检的部分做成确定性检查。
  * 只报告，不改稿；由模型按结果自行修订。
  */
-function selfCheck(text, window, alternates = []) {
+function selfCheck(text, window, alternates = [], options = {}) {
   const problems = []
   const lines = text.split(/\r?\n/)
   const candidates = [window, ...alternates]
@@ -1241,6 +1276,26 @@ function selfCheck(text, window, alternates = []) {
   for (const title of FIXED_TITLES) {
     const hits = lines.filter((line) => line.trim() === title).length
     if (hits !== 1) problems.push(`四段标题「${title}」应恰好出现 1 次，实际 ${hits} 次`)
+  }
+
+  // 第 4 段句数下界：素材里确实有可回看的思考时（thinkingAvailable），
+  // 只写一句就算不合格 —— 这是「明明有好几点却只写一个」的机检兜底。
+  if (options.thinkingAvailable === true) {
+    const min = Number.isInteger(options.minThinkingSentences) ? options.minThinkingSentences : 2
+    const fourthTitle = FIXED_TITLES[FIXED_TITLES.length - 1]
+    const start = lines.findIndex((line) => line.trim() === fourthTitle)
+    if (start >= 0) {
+      const body = lines.slice(start + 1).join(' ').trim()
+      const declined = body.includes('今天没有记录到可以回看的思考')
+      if (!declined) {
+        const sentences = (body.match(/[。！？]/g) || []).length
+        if (sentences < min) {
+          problems.push(
+            `第 4 段只写了 ${sentences} 句：素材里有可回看的思考时应写 ${min} 到 3 句，每句一个独立的点`,
+          )
+        }
+      }
+    }
   }
 
   if (text.includes('（进行中）')) problems.push('出现旧口径「（进行中）」，必须写成（进行中，截至 <HH:MM>）')
@@ -1661,6 +1716,8 @@ export {
   pickToolCalls,
   buildSessionPayload,
   toLosslessJson,
+  KIND_SHARE,
+  pickThinkingHints,
 }
 
 export function apply(ctx, config = {}) {
@@ -2016,7 +2073,9 @@ export function apply(ctx, config = {}) {
             ' 条」的旧规则。' +
             'sources.sessions[].coverage 里 raw* 是抽样前的真实条数、allocatedChars 是该会话分到的字符额度。' +
             'raw 远大于实际条数时，说明你只看到了一部分：照实写已看到的，不要在正文里声称覆盖了全天全部内容。' +
-            'sources.archivedSkipped 大于 0 表示按设置排除了归档会话，属用户明确选择，正文不必解释。',
+            'sources.archivedSkipped 大于 0 表示按设置排除了归档会话，属用户明确选择，正文不必解释。' +
+            'sources.thinkingHints 是当天最值得回看的思考候选（最多 5 条，已按因果/结论密度排序）：' +
+            '第 4 段要从这里挑 2-3 个展开，不要只写一个。',
           noDateAsking: '不索要日期，不问今天是几号；日期只能来自 now。',
         },
         sources,
@@ -2024,13 +2083,15 @@ export function apply(ctx, config = {}) {
         sectionRules: [
           '第 1、2、3 段每条以 - 起行，一事一条，每段真实事件 0 到 5 条；语料里没有这一方面时写 - 今天没有记录到这方面的事，那不是条目、不计条数、也不算空段。',
           '第 2 段两类都在时「充实：」「收获：」前缀都出现；只有一类时只出现对应的那一个前缀，不新开段。',
-          '第 4 段不用 - 起行，直接写 1 到 3 句；没有可回看的思考时写 今天没有记录到可以回看的思考。',
+          '第 4 段不用 - 起行，直接写 2 到 3 句：每句一个独立的思考点，不许把两个点并成一句。没有可回看的思考时写 今天没有记录到可以回看的思考。',
           '段与段之间空一行；段标题顶格，标题行后不留空行直接接第一条。',
           '全文固定第一人称视角；正文任何一行都不出现 @、场景编号、引号包裹的主题词。',
           '语料默认不附出处；仅当对方明确指出某条与事实不符、或质疑某条不实、或要求核对出处时，才对被质疑的那一条附出处，其余条目不增不改；找不到依据就直说依据不足并建议删掉，禁止现造出处。',
           '只用纯文本：不带表格、围栏、强调符号、标题符号与 HTML。',
         ],
-        selfCheckHint: '成文后调用 daily_summary_selfcheck，把成稿全文传进去，按 problems 逐条改到 ok 为真。',
+        selfCheckHint:
+          '成文后调用 daily_summary_selfcheck，把成稿全文传进去，按 problems 逐条改到 ok 为真；' +
+          '取数结果里 thinkingHints 非空时，同时传 thinkingAvailable=true，第 4 段只写一句会被判为不合格。',
       }
     },
   })
@@ -2039,13 +2100,22 @@ export function apply(ctx, config = {}) {
     name: 'daily_summary_selfcheck',
     description:
       '每日总结的交付前自检：把已写好的四段纯文本成稿传进来，按 SKILL.md 的输出自检与禁止事项做确定性检查' +
-      '（抬头与注记、四段标题逐字、禁用符号、来源标注、第一人称等），返回问题清单。只在成文后调用。',
+      '（抬头与注记、四段标题逐字、禁用符号、来源标注、第一人称、第 4 段句数下界等），返回问题清单。只在成文后调用。',
     parameters: {
       type: 'object',
       properties: {
         text: {
           type: 'string',
           description: '完整的四段纯净文本成稿（含抬头与可能的说明行）。',
+        },
+        thinkingAvailable: {
+          type: 'boolean',
+          description:
+            '取数结果里 thinkingHints 非空时传 true：要求第 4 段至少写 2 句，只写一句会被判为不合格。',
+        },
+        minThinkingSentences: {
+          type: 'number',
+          description: '第 4 段最少的句数，默认 2，允许 1–3。',
         },
       },
       required: ['text'],
@@ -2076,7 +2146,10 @@ export function apply(ctx, config = {}) {
       // 所以除了按 now 算出的窗口，也接受「昨天的凌晨补记形态」，
       // 否则关机后延迟到早上补发时，成稿会被自检判成抬头不符而卡死。
       const alternate = catchUpWindow(addDays(now, -1))
-      const result = selfCheck(text, window, [alternate])
+      const result = selfCheck(text, window, [alternate], {
+        thinkingAvailable: input.thinkingAvailable === true,
+        minThinkingSentences: input.minThinkingSentences,
+      })
       const deliveredBy = typeof exec === 'object' && exec && exec.agent ? exec.agent.id : undefined
       // 记录时用**实际匹配到的**那份窗口，不能用 now 重算：
       // 早上补发昨天的总结，若按 now 记成今天，今天的自动产出就会被误跳过。

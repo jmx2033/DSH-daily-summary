@@ -361,6 +361,26 @@ assert.equal(fail.ok, false)
 assert.ok(fail.problems.some((p) => p.includes('用户')))
 assert.ok(fail.problems.some((p) => p.includes('@scene')))
 
+// 第 4 段句数下界：素材里确实有可回看的思考时（thinkingAvailable），只写一句要拦住。
+const oneSentence = good.replace('规则能照着走通，才算写完。', '规则能照着走通。')
+const thinCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: oneSentence, thinkingAvailable: true }, {})
+assert.equal(thinCheck.ok, false, '只写一句应被判不合格')
+assert.ok(
+  thinCheck.problems.some((problem) => problem.includes('第 4 段')),
+  JSON.stringify(thinCheck.problems),
+)
+
+const twoSentences = good.replace('规则能照着走通，才算写完。', '规则能照着走通。才算写完。')
+const thickCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: twoSentences, thinkingAvailable: true }, {})
+assert.equal(thickCheck.ok, true, JSON.stringify(thickCheck.problems))
+
+// 未开启 thinkingAvailable 时保持旧行为：一句也放行（素材不足时不硬凑）
+assert.equal(pass.ok, true, '未开启时不应因句数报错')
+
 // 均匀采样：必须覆盖首尾，不能等价于"只取最后 N 条"
 // （2026-10-31 实测：某会话当天 133 条用户消息只进来最后 8 条，上午中午全丢）
 {

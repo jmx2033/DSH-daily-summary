@@ -1,6 +1,6 @@
 # 每日总结（Daily Summary）· DSH 插件
 
-当前版本 **1.7.0**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
+当前版本 **1.8.0**（设置页底部显示的就是它）。版本号只有 `package.json` 一处真相，
 `index.js` 用 `createRequire` 读回来，不另写一份。
 
 以 [`docs/SKILL.md`](docs/SKILL.md)（终版，QA 10/10 通过）为唯一基准，
@@ -36,6 +36,7 @@
 | 1.6.0 | 取数改为**全局字符预算**（`charBudget`，默认 40 万字符）：按各会话原始字符量加权分配，每会话保底 40%、单会话封顶 25%；会话内按类别分层截断（用户 800 字、工具错误 400 字、助手 400 字、推理 300 字、工具调用 160 字），工具调用优先保留写/改类操作。`charBudget` 设为 0 退回「每类固定条数」的旧规则 |
 | 1.6.1 | 修 `daily_summary_settings` 返回体含 `undefined` 导致 DSH 报「not lossless JSON」：返回前统一清洗（命令路径此前被 `JSON.stringify` 掩盖，所以只有工具调用会失败） |
 | 1.7.0 | 新增「包含已归档会话」开关（默认开）：DSH 的归档只写 `workspace.json` 的 `archivedSessionIds`、日志不删，所以默认照样取数；关掉后取数与设置页候选都跳过归档会话。设置页、`archived on/off` 命令、工具 `action=set_archived` 三处同源 |
+| 1.8.0 | 第 4 段「今日份思考」不再只写一句：思考素材占比 8% → 15%；新增 `sources.thinkingHints`（按因果/结论密度排序的 3–5 条候选）；规则改为「2 到 3 句、每句一个独立的点」；`daily_summary_selfcheck` 新增 `thinkingAvailable`，素材充足时只写一句会被判不合格 |
 
 ## 自动化：定时任务一天只交一份（分支结构）
 
@@ -211,7 +212,7 @@
 4. 生效后：侧边栏底部出现「每日总结」横栏，设置 → 左侧导航多出一页「每日总结」。
 
 > 包名带 `@local/` 前缀是本地包名，不发布到 npm；安装走目录，不需要联网。
-> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.7.0` 这样的版本号。
+> 想确认装的是哪一版：设置 → 每日总结，右下角显示 `v1.8.0` 这样的版本号。
 
 可选配置有两条路：**优先用设置页**（设置 → 每日总结 → 取数与分界），改动写进
 `settings.json` 的 `tuning` 分区并立即生效；`cordis.patch.yml` 的 `config` 是兜底，
@@ -309,6 +310,20 @@ Error: tool "daily_summary" returned invalid output: value is not lossless JSON
 - 三种改法同上：设置页勾选框、`/daily-summary-settings archived on|off`、
   `daily_summary_settings` 的 `action: set_archived`（传 `includeArchived: true|false`）；
 - 关掉时会在 `sources` 里用 `archivedSkipped` 如实报出被过滤掉的数量。
+
+### 第 4 段「今日份思考」为什么不会再只写一句（1.8.0）
+
+三处一起改，缺一条都可能退回「只写一句」：
+
+1. **素材**：`reasoning` 的预算占比从 8% 提到 15%，模型看到的思考更多；
+2. **候选**：`sources.thinkingHints` 给出最多 5 条「可回看的思考点」，
+   按是否在讲因果/结论（因为、其实、发现、关键、原来、问题在于……）加长度排序，
+   并过滤掉 40 字以下的过程性碎念；
+3. **兜底**：规则改成「2 到 3 句、每句一个独立的点」，`daily_summary_selfcheck`
+   新增 `thinkingAvailable` 与 `minThinkingSentences`——素材充足时只写一句会被 `problems` 拦下。
+
+`daily_summary` 返回的 `selfCheckHint` 会提醒模型：`thinkingHints` 非空时传
+`thinkingAvailable=true`。素材确实不足时仍写「今天没有记录到可以回看的思考」，不会被误判。
 
 ## 测试
 
