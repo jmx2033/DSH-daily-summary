@@ -5,6 +5,7 @@ import {
   buildSessionPayload,
   toLosslessJson,
   pickThinkingHints,
+  shareText,
   KIND_SHARE,
   CLIP_BY_KIND,
   DEFAULT_CHAR_BUDGET,
@@ -128,5 +129,16 @@ assert.ok(
   hints[0].includes('其实问题在于'),
   '讲因果/结论的思考应排在流水账式思考前面',
 )
+
+// 11) 文案里的配额百分比必须与 KIND_SHARE 一致（防止再次「文案说 8%、代码给 15%」）
+const shareLine = shareText()
+for (const [key, ratio] of Object.entries(KIND_SHARE)) {
+  const pct = Math.round(ratio * 100)
+  assert.ok(
+    shareLine.includes(`${pct}%`),
+    `文案应包含 ${key} 的 ${pct}%，实际：${shareLine}`,
+  )
+}
+assert.equal(shareLine, '用户指令 36%、助手回复 22%、工具调用 14%、工具错误 13%、推理 15%')
 
 console.log('sampling-test: all assertions passed')

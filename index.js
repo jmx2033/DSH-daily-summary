@@ -615,6 +615,21 @@ function pickWithinQuota(list, quotaChars, clipLen, cap = MAX_EVENTS_HARD_CAP) {
   return sampleEvenly(list, count).map((text) => clip(text, clipLen))
 }
 
+/** 把 KIND_SHARE 拼成给模型看的文案，避免手写数字与实际配额漂移。
+ *  2026-11-18 发现：文案写死「推理 8%」，实际早已改成 15%，属于文案撒谎。 */
+function shareText() {
+  const label = {
+    user: '用户指令',
+    assistant: '助手回复',
+    toolCalls: '工具调用',
+    toolErrors: '工具错误',
+    reasoning: '推理',
+  }
+  return Object.entries(KIND_SHARE)
+    .map(([key, ratio]) => `${label[key] ?? key} ${Math.round(ratio * 100)}%`)
+    .join('、')
+}
+
 /** 工具调用里出现这些词，说明它"改动了东西"，比只读命令更值得留。 */
 const WRITE_HINT = /(write|edit|apply_patch|patch|mkdir|rmdir|git |npm |node |bash|powershell)/i
 
@@ -1300,13 +1315,19 @@ function selfCheck(text, window, alternates = [], options = {}) {
     const fourthTitle = FIXED_TITLES[FIXED_TITLES.length - 1]
     const start = lines.findIndex((line) => line.trim() === fourthTitle)
     if (start >= 0) {
-      const body = lines.slice(start + 1).join(' ').trim()
+      const body = lines.slice(start + 1).join('\n').trim()
       const declined = body.includes('今天没有记录到可以回看的思考')
       if (!declined) {
-        const sentences = (body.match(/[。！？]/g) || []).length
-        if (sentences < min) {
+        // 按**非空行数**计，不按句号计：规则要求「每个思考点单独一行」，
+        // 若按 `[。！？]` 数，三行都不带句号会被误判成 0 句
+        // （2026-11-18 自检发现的规则与实现口径不一致）。
+        const counts = body
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0).length
+        if (counts < min) {
           problems.push(
-            `第 4 段只写了 ${sentences} 句：素材里有可回看的思考时应写 ${min} 到 3 句，每句一个独立的点`,
+            `第 4 段只有 ${counts} 行：素材里有可回看的思考时应写 ${min} 到 3 行，每行一个独立的点`,
           )
         }
       }
@@ -1733,6 +1754,7 @@ export {
   toLosslessJson,
   KIND_SHARE,
   pickThinkingHints,
+  shareText,
 }
 
 export function apply(ctx, config = {}) {
@@ -2075,7 +2097,9 @@ export function apply(ctx, config = {}) {
             '每个会话的素材由**全局字符预算**分配：charBudget（当前 ' +
             tuning.charBudget +
             ' 字符，0 表示关闭）先按各会话的原始字符量加权分给每个会话，' +
-            '会话内再按类别切分额度（用户指令 40%、助手回复 25%、工具调用 15%、工具错误 12%、推理 8%），' +
+            '会话内再按类别切分额度（' +
+            shareText() +
+            '），' +
             '并按类别做不同长度的截断（用户 ' +
             CLIP_BY_KIND.user +
             ' 字、工具调用 ' +
@@ -2115,7 +2139,7 @@ export function apply(ctx, config = {}) {
     name: 'daily_summary_selfcheck',
     description:
       '每日总结的交付前自检：把已写好的四段纯文本成稿传进来，按 SKILL.md 的输出自检与禁止事项做确定性检查' +
-      '（抬头与注记、四段标题逐字、禁用符号、来源标注、第一人称、第 4 段句数下界等），返回问题清单。只在成文后调用。',
+      '（抬头与注记、四段标题逐字、禁用符号、来源标注、第一人称、第 4 段行数下界等），返回问题清单。只在成文后调用。',
     parameters: {
       type: 'object',
       properties: {
@@ -2126,11 +2150,11 @@ export function apply(ctx, config = {}) {
         thinkingAvailable: {
           type: 'boolean',
           description:
-            '取数结果里 thinkingHints 非空时传 true：要求第 4 段至少写 2 句，只写一句会被判为不合格。',
+            '取数结果里 thinkingHints 非空时传 true：要求第 4 段至少写 2 行，只写一行会被判为不合格。',
         },
         minThinkingSentences: {
           type: 'number',
-          description: '第 4 段最少的句数，默认 2，允许 1–3。',
+          description: '第 4 段最少的行数，默认 2，允许 1–3。',
         },
       },
       required: ['text'],

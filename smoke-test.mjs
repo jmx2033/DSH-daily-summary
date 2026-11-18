@@ -372,16 +372,49 @@ assert.ok(
   JSON.stringify(thinCheck.problems),
 )
 
-const twoSentences = good.replace('规则能照着走通，才算写完。', '规则能照着走通。才算写完。')
+// 两行写法应通过（按行数计，不要求每行带句号）
+const twoLines = good.replace(
+  '规则能照着走通，才算写完。',
+  '规则能照着走通\n自检要能真的拦住问题',
+)
 const thickCheck = await tools
   .get('daily_summary_selfcheck')
-  .execute({ text: twoSentences, thinkingAvailable: true }, {})
+  .execute({ text: twoLines, thinkingAvailable: true }, {})
 assert.equal(thickCheck.ok, true, JSON.stringify(thickCheck.problems))
+
+// 同一行写两句不算两个点：规则要的是分行，不是分句
+const sameLineTwo = good.replace(
+  '规则能照着走通，才算写完。',
+  '规则能照着走通。才算写完。',
+)
+const sameLineCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: sameLineTwo, thinkingAvailable: true }, {})
+assert.equal(sameLineCheck.ok, false, '同一行写两句应被判不合格（要求分行）')
 
 // 未开启 thinkingAvailable 时保持旧行为：一句也放行（素材不足时不硬凑）
 assert.equal(pass.ok, true, '未开启时不应因句数报错')
 
-// 第 4 段换成多行后仍不许用 - 起行
+// 第 4 段按**非空行数**计，不按句号计：三行都不带句号也必须算 3 个点
+const noPeriodLines = good.replace(
+  '规则能照着走通，才算写完。',
+  '规则能照着走通\n自检要能真的拦住问题\n文案不能和代码说的不一样',
+)
+const noPeriodCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: noPeriodLines, thinkingAvailable: true }, {})
+assert.equal(
+  noPeriodCheck.ok,
+  true,
+  `三行无句号也应算 3 个点：${JSON.stringify(noPeriodCheck.problems)}`,
+)
+
+// 单行无句号仍应被判不合格（不能被"有行就算过"蒙过去）
+const oneLineNoPeriod = good.replace('规则能照着走通，才算写完。', '规则能照着走通')
+const oneLineCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: oneLineNoPeriod, thinkingAvailable: true }, {})
+assert.equal(oneLineCheck.ok, false, '单行应被判不合格')
 const dashFourth = good.replace('规则能照着走通，才算写完。', '- 规则能照着走通。')
 const dashCheck = await tools
   .get('daily_summary_selfcheck')
