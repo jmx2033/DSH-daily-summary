@@ -153,11 +153,12 @@ assert.equal(shareLine, '用户指令 36%、助手回复 22%、工具调用 14%�
 
 // 12) 第 4 段规则的单一真相：常量与 SKILL.md 必须一致
 //     （不做文档生成 —— 用断言守住漂移，比引入生成管线简单得多）
-assert.ok(FOURTH_SECTION_RULE.includes('每个思考点单独一行'), '常量应包含分行要求')
+assert.ok(FOURTH_SECTION_RULE.includes('单独成段'), '常量应包含「每个点单独一行」的要求')
+assert.ok(FOURTH_SECTION_RULE.includes('可以写长'), '常量应允许每个点写长')
 assert.ok(FOURTH_SECTION_RULE.includes('不用 - 起行'), '常量应包含禁用 - 的约束')
 assert.ok(
-  FOURTH_SECTION_RULE.includes(`${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 行`),
-  '常量的行数区间应与上下界常量一致',
+  FOURTH_SECTION_RULE.includes(`${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 个点`),
+  '常量的点数区间应与上下界常量一致',
 )
 assert.ok(FOURTH_SECTION_MIN_LINES < FOURTH_SECTION_MAX_LINES, '下界应小于上界')
 
@@ -168,10 +169,11 @@ assert.ok(FOURTH_SECTION_MIN_LINES < FOURTH_SECTION_MAX_LINES, '下界应小于�
     .split('\n')
     .find((line) => line.includes('第 4 段不用 - 起行'))
   assert.ok(skillLine, 'SKILL.md 应有一条第 4 段规则')
-  assert.ok(skillLine.includes('每个思考点单独一行'), 'SKILL.md 必须同代码一样要求分行')
+  assert.ok(skillLine.includes('单独成段'), 'SKILL.md 必须同代码一样要求分行')
+  assert.ok(skillLine.includes('可以写长'), 'SKILL.md 必须同代码一样允许写长')
   assert.ok(
-    skillLine.includes(`${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 行`),
-    `SKILL.md 的行数区间必须与代码一致（${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES}）：${skillLine}`,
+    skillLine.includes(`${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 个点`),
+    `SKILL.md 的点数区间必须与代码一致（${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES}）：${skillLine}`,
   )
 }
 

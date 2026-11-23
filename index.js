@@ -411,9 +411,9 @@ const FOURTH_SECTION_MAX_LINES = 3
  * `docs/SKILL.md` 是人工维护的 markdown，由 tests 断言关键片段一致，不做生成。
  */
 const FOURTH_SECTION_RULE =
-  '第 4 段不用 - 起行，每个思考点单独一行：' +
-  `${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 行，每行一句、一个独立的点，` +
-  '行与行之间不换空行。没有可回看的思考时写 今天没有记录到可以回看的思考。'
+  '第 4 段不用 - 起行，每个思考点单独成段（一行）：' +
+  `${FOURTH_SECTION_MIN_LINES} 到 ${FOURTH_SECTION_MAX_LINES} 个点，每个点一行、可以写长（几十到一两百字都行，把一个点说透），` +
+  '行与行之间不空行。没有可回看的思考时写 今天没有记录到可以回看的思考。'
 
 /**
  * 用户本人的说话风格 —— 从 `日志.txt` 前后一个半月的真实手写记录提炼。
@@ -434,6 +434,7 @@ const USER_VOICE_RULES = [
   '句子可以一逗到底、用破折号或括号补充；不追求书面语的工整。',
   '会自嘲，也会给自己打气（例如「加油」）；但不写空洞的励志话。',
   '念头可以跳跃，一件事接一件事地絮叨；不要写成整齐的并列排比。',
+  '第 4 段的每个点都可以写成一大段话（几十到一两百字），把当时的想法连贯地说完，不用为了精简而砍掉细节。',
 ]
 
 /**
@@ -1465,7 +1466,7 @@ function selfCheck(text, window, alternates = [], options = {}) {
           .filter((line) => line.length > 0).length
         if (counts < min) {
           problems.push(
-            `第 4 段只有 ${counts} 行：素材里有可回看的思考时应写 ${min} 到 ${FOURTH_SECTION_MAX_LINES} 行，每行一个独立的点`,
+            `第 4 段只有 ${counts} 个点：素材里有可回看的思考时应写 ${min} 到 ${FOURTH_SECTION_MAX_LINES} 个点，每个点单独一行（可以写长）`,
           )
         }
       }
@@ -2314,12 +2315,12 @@ export function apply(ctx, config = {}) {
         thinkingAvailable: {
           type: 'boolean',
           description:
-            `取数结果里 thinkingHints 非空时传 true：要求第 4 段至少写 ${FOURTH_SECTION_MIN_LINES} 行，` +
+            `取数结果里 thinkingHints 非空时传 true：要求第 4 段至少写 ${FOURTH_SECTION_MIN_LINES} 个思考点（每点一行），` +
             '只写一行会被判为不合格。',
         },
         minThinkingSentences: {
           type: 'number',
-          description: `第 4 段最少的行数，默认 ${FOURTH_SECTION_MIN_LINES}，允许 1–${FOURTH_SECTION_MAX_LINES}。`,
+          description: `第 4 段最少的思考点个数，默认 ${FOURTH_SECTION_MIN_LINES}，允许 1–${FOURTH_SECTION_MAX_LINES}。`,
         },
       },
       required: ['text'],
