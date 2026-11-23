@@ -490,6 +490,34 @@ assert.ok(
   JSON.stringify(dashCheck.problems),
 )
 
+// 助手自称的口气必须被拦：总结是用户本人的第一人称（2026-11-23 实测第 4 段出现过）
+const assistantVoiceText = good.replace(
+  '规则能照着走通，才算写完。',
+  '我得先把他的喜好如实告诉她\n第二行凑够行数\n第三行也是',
+)
+const voiceCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: assistantVoiceText, thinkingAvailable: true }, {})
+assert.equal(voiceCheck.ok, false, '助手自称的口气应被判不合格')
+assert.ok(
+  voiceCheck.problems.some((problem) => problem.includes('助手自称')),
+  JSON.stringify(voiceCheck.problems),
+)
+
+// 用户本人视角的「我」不应被误判
+const userVoiceText = good.replace(
+  '规则能照着走通，才算写完。',
+  '我先把规则走通\n再让自检真的拦住问题\n文案不能和代码说的不一样',
+)
+const userVoiceCheck = await tools
+  .get('daily_summary_selfcheck')
+  .execute({ text: userVoiceText, thinkingAvailable: true }, {})
+assert.equal(
+  userVoiceCheck.ok,
+  true,
+  `用户第一人称不该被拦：${JSON.stringify(userVoiceCheck.problems)}`,
+)
+
 // 均匀采样：必须覆盖首尾，不能等价于"只取最后 N 条"
 // （2026-10-31 实测：某会话当天 133 条用户消息只进来最后 8 条，上午中午全丢）
 {
