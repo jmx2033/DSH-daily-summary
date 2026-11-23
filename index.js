@@ -435,6 +435,11 @@ const USER_VOICE_RULES = [
   '会自嘲，也会给自己打气（例如「加油」）；但不写空洞的励志话。',
   '念头可以跳跃，一件事接一件事地絮叨；不要写成整齐的并列排比。',
   '第 4 段的每个点都可以写成一大段话（几十到一两百字），把当时的想法连贯地说完，不用为了精简而砍掉细节。',
+  // 2026-11-24 补：原来第 4 段容易全写成生活/感情感想，技术上的想通被挤到第 2 段的「收获」里。
+  // 用户要的是技术思考留在第 4 段，所以明确要求至少留一个点给技术。
+  '第 4 段至少要有一个点是**技术层面的想通**：某个坑的根因、某个判断为什么成立、某个方案的取舍理由。' +
+    '技术读者要能从中看出「今天在专业上想明白了什么」，不要只写生活和情绪。',
+  '如果当天确实没有技术层面的思考（纯休息日），才允许全写生活；否则技术点优先于生活感悟。',
 ]
 
 /**
@@ -755,6 +760,15 @@ function pickToolCalls(list, quotaChars, clipLen, cap = MAX_EVENTS_HARD_CAP) {
 const THINKING_HINT = /(因为|所以|其实|发现|关键|原来|意识到|问题在于|根因|值得|教训|结论|应该|不该)/g
 
 /**
+ * 技术类思考的额外加权词。
+ *
+ * 2026-11-24 实测：第 4 段被生活和情绪类的感想占满，技术上的想通（例如「SKILL.md 从没被
+ * 插件加载过」）被挤到第 2 段的「收获」里。用户要的是技术思考留在第 4 段，所以对含这些
+ * 词的推理片段额外加权，让它们在候选清单里排前面。
+ */
+const TECH_HINT = /(代码|实现|调用|接口|函数|参数|配置|插件|日志|索引|缓存|编译|部署|版本|依赖|报错|异常|根因|排查|验证|测试|脚本|正则|编码|解码|并发|锁|内存|磁盘|路径|注册表|协议|字段|数据结构)/g
+
+/**
  * 从各会话的思考素材里挑出「可回看的思考点」候选。
  *
  * 为什么要单独挑：第 4 段要求写 2-3 个思考点，但 reasoning 动辄几百上千条，
@@ -773,13 +787,24 @@ function pickThinkingHints(entries, limit = 5) {
       if (seen.has(key)) continue
       seen.add(key)
       const hits = (text.match(THINKING_HINT) || []).length
-      scored.push({ text, score: hits * 1000 + Math.min(text.length, 600) })
+      const techHits = (text.match(TECH_HINT) || []).length
+      // 技术类额外加权：让「想通了哪个技术问题」排在生活感悟前面。
+      scored.push({
+        text,
+        tech: techHits > 0,
+        score: hits * 1000 + techHits * 1500 + Math.min(text.length, 600),
+      })
     }
   }
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((item) => clip(item.text, 220))
+  // 优先保证候选里技术类占比：先取技术类，不够再用其余补齐，最后按分数排。
+  const techFirst = scored.filter((item) => item.tech)
+  const rest = scored.filter((item) => !item.tech)
+  const techQuota = Math.min(techFirst.length, Math.max(2, Math.ceil(limit * 0.6)))
+  const picked = [
+    ...techFirst.sort((a, b) => b.score - a.score).slice(0, techQuota),
+    ...rest.sort((a, b) => b.score - a.score),
+  ].slice(0, limit)
+  return picked.map((item) => clip(item.text, 220))
 }
 
 function buildSessionPayload(item, { quota, maxEventsPerKind, snippetChars }) {

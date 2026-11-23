@@ -235,4 +235,26 @@ assert.ok(FOURTH_SECTION_MIN_LINES < FOURTH_SECTION_MAX_LINES, '下界应小于�
   )
 }
 
+// 16) 技术类思考必须优先进入候选（否则第 4 段会被生活感悟占满）
+{
+  const filler = (s) => s.repeat(6) + '。'
+  const entries = [
+    {
+      reasoning: [
+        filler('今天心里挺舒服的，感觉一切都在慢慢变好，其实也没那么难'),
+        filler('生活就是这样，关键是要放平心态，所以我不着急'),
+      ],
+    },
+    {
+      reasoning: [
+        filler('根因是插件的 SKILL.md 从来没被加载过，日志里也没有索引'),
+        filler('排查发现是路径配置写错，脚本里的正则没匹配到注册表字段'),
+      ],
+    },
+  ]
+  const hints = pickThinkingHints(entries, 5)
+  const techish = hints.filter((t) => /根因|插件|日志|索引|配置|脚本|正则|注册表|字段/.test(t))
+  assert.ok(techish.length >= 2, `技术类候选应占多数，实际 ${techish.length}/${hints.length}`)
+}
+
 console.log('sampling-test: all assertions passed')
