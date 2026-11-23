@@ -10,6 +10,8 @@ import {
   pickThinkingHints,
   shareText,
   writeSnapshot,
+  RUNTIME_RULES,
+  FIXED_TITLES,
   SNAPSHOT_RETENTION_DAYS,
   FOURTH_SECTION_RULE,
   FOURTH_SECTION_MIN_LINES,
@@ -197,6 +199,38 @@ assert.ok(FOURTH_SECTION_MIN_LINES < FOURTH_SECTION_MAX_LINES, '下界应小于�
   assert.equal(result.pruned, 1, '应清理 1 个过期快照')
 
   assert.ok(SNAPSHOT_RETENTION_DAYS === 3, '留存天数应为 3')
+}
+
+// 14) 运行时规则是单一来源：包含四段结构、口吻定义、用户风格
+{
+  const joined = RUNTIME_RULES.join('\n')
+  assert.ok(Array.isArray(RUNTIME_RULES), 'RUNTIME_RULES 应为数组')
+  assert.ok(RUNTIME_RULES.length >= 7, '应包含全部运行时规则')
+  assert.ok(joined.includes(FOURTH_SECTION_RULE), '第 4 段规则必须来自常量而非另写一份')
+  assert.ok(joined.includes('本机用户'), '口吻规则必须点明「我」指用户本人')
+  assert.ok(joined.includes('助手自称'), '口吻规则必须禁止助手自称')
+  assert.ok(joined.includes('语气按用户本人的习惯写'), '应包含用户风格条目')
+  assert.ok(joined.includes('我靠'), '风格规则应允许用户常用的粗口')
+  assert.ok(joined.includes('口语化'), '风格规则应要求口语化')
+  // 四段标题必须与 FIXED_TITLES 对得上（规则里没写标题，但结构文案要一致）
+  assert.ok(FIXED_TITLES.length === 4)
+}
+
+// 15) SKILL.md 已降级为设计说明：不再带 version，且明确不参与运行时
+{
+  const skill = await readFile(new URL('./docs/SKILL.md', import.meta.url), 'utf8')
+  assert.ok(
+    !/^version:/m.test(skill),
+    'SKILL.md 不应再有 version 字段（它不参与运行时，同步版本号是纯负担）',
+  )
+  assert.ok(
+    skill.includes('不参与运行时'),
+    'SKILL.md 应明确标注自己是设计说明',
+  )
+  assert.ok(
+    skill.includes('RUNTIME_RULES'),
+    'SKILL.md 应指出真正的规则来源',
+  )
 }
 
 console.log('sampling-test: all assertions passed')
